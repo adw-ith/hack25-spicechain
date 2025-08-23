@@ -54,42 +54,139 @@ def rows_to_dicts(rows):
 # ---------------------------------------
 # SQLAlchemy Models (Reflecting your schema)
 # ---------------------------------------
+# ---------------------------------------
+# SQLAlchemy Models (Reflecting your schema)
+# ---------------------------------------
+
 class Participant(db.Model):
     __tablename__ = 'participants'
     id = db.Column(db.BigInteger, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(255), unique=True)
     password_hash = db.Column(db.Text)
-    role = db.Column(db.String(50), nullable=False)
+    role = db.Column(db.String(50), nullable=False) # Maps to the 'role' enum in SQL
+    contact_info = db.Column(db.JSONB, default=lambda: {})
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+
+class Location(db.Model):
+    __tablename__ = 'locations'
+    id = db.Column(db.BigInteger, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    kind = db.Column(db.String(50))
+    address = db.Column(db.Text)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+
+class Spice(db.Model):
+    __tablename__ = 'spices'
+    id = db.Column(db.BigInteger, primary_key=True)
+    name = db.Column(db.String(120), unique=True, nullable=False)
+    varietal = db.Column(db.String(120))
+    meta = db.Column(db.JSONB, default=lambda: {})
 
 class Batch(db.Model):
     __tablename__ = 'batches'
     id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     spice_id = db.Column(db.BigInteger, db.ForeignKey('spices.id'), nullable=False)
+    origin_location_id = db.Column(db.BigInteger, db.ForeignKey('locations.id'))
+    origin_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    harvest_date = db.Column(db.Date)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
     current_owner_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default='Active')
+
     stock = db.relationship('BatchStock', backref='batch', uselist=False, cascade="all, delete-orphan")
-    owner = db.relationship('Participant', foreign_keys=[current_owner_id])
+    origin_participant = db.relationship('Participant', foreign_keys=[origin_participant_id])
+    current_owner = db.relationship('Participant', foreign_keys=[current_owner_id])
+    spice = db.relationship('Spice')
 
 class BatchStock(db.Model):
     __tablename__ = 'batch_stock'
-    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id'), primary_key=True)
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='CASCADE'), primary_key=True)
     qty_g_available = db.Column(db.Numeric(18, 3), nullable=False)
-
-class Transfer(db.Model):
-    __tablename__ = 'transfers'
-    id = db.Column(db.BigInteger, primary_key=True)
-    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id'), nullable=False)
-    from_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
-    to_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
-    qty_g = db.Column(db.Numeric(18, 3), nullable=False)
-    price_per_kg = db.Column(db.Numeric(12, 2))
 
 class BatchComposition(db.Model):
     __tablename__ = 'batch_compositions'
     id = db.Column(db.BigInteger, primary_key=True)
-    child_batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id'), nullable=False)
-    source_batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id'), nullable=False)
+    child_batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='CASCADE'), nullable=False)
+    source_batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='RESTRICT'), nullable=False)
     qty_g_used = db.Column(db.Numeric(18, 3), nullable=False)
+    note = db.Column(db.Text)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+
+class BatchEvent(db.Model):
+    __tablename__ = 'batch_events'
+    id = db.Column(db.BigInteger, primary_key=True)
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='CASCADE'), nullable=False)
+    event_type = db.Column(db.String(50), nullable=False) # Maps to the 'batch_event_type' enum
+    actor_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    at_location_id = db.Column(db.BigInteger, db.ForeignKey('locations.id'))
+    event_time = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    details = db.Column(db.JSONB, nullable=False, default=lambda: {})
+    from_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'))
+    to_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'))
+    qty_g_delta = db.Column(db.Numeric(18, 3))
+    prev_event_hash = db.Column(db.LargeBinary)
+    event_hash = db.Column(db.LargeBinary, nullable=False)
+
+class Transfer(db.Model):
+    __tablename__ = 'transfers'
+    id = db.Column(db.BigInteger, primary_key=True)
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='RESTRICT'), nullable=False)
+    from_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    to_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    qty_g = db.Column(db.Numeric(18, 3), nullable=False)
+    price_per_kg = db.Column(db.Numeric(12, 2))
+    transaction_time = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    meta = db.Column(db.JSONB, default=lambda: {})
+
+class Package(db.Model):
+    __tablename__ = 'packages'
+    id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    label_code = db.Column(db.Text, unique=True, nullable=False)
+    net_qty_g = db.Column(db.Numeric(18, 3), nullable=False)
+    packaged_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    packager_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    current_owner_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default='InStock')
+
+class PackageContent(db.Model):
+    __tablename__ = 'package_contents'
+    package_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('packages.id', ondelete='CASCADE'), primary_key=True)
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='RESTRICT'), primary_key=True)
+    qty_g_from_batch = db.Column(db.Numeric(18, 3), nullable=False)
+
+class PackageEvent(db.Model):
+    __tablename__ = 'package_events'
+    id = db.Column(db.BigInteger, primary_key=True)
+    package_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('packages.id', ondelete='CASCADE'), nullable=False)
+    event_type = db.Column(db.String(50), nullable=False) # Maps to the 'package_event_type' enum
+    actor_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    event_time = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    details = db.Column(db.JSONB, nullable=False, default=lambda: {})
+    prev_event_hash = db.Column(db.LargeBinary)
+    event_hash = db.Column(db.LargeBinary, nullable=False)
+
+class QATest(db.Model):
+    __tablename__ = 'qa_tests'
+    id = db.Column(db.BigInteger, primary_key=True)
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='CASCADE'))
+    package_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('packages.id', ondelete='CASCADE'))
+    test_type = db.Column(db.String(60), nullable=False)
+    result = db.Column(db.JSONB, nullable=False)
+    tested_by_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'))
+    tested_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+
+class AuditLog(db.Model):
+    __tablename__ = 'audit_log'
+    id = db.Column(db.BigInteger, primary_key=True)
+    table_name = db.Column(db.Text, nullable=False)
+    row_pk = db.Column(db.Text, nullable=False)
+    op = db.Column(db.String(10), nullable=False)
+    at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    actor_id = db.Column(db.BigInteger)
+    old_row = db.Column(db.JSONB)
+    new_row = db.Column(db.JSONB)
 
 # Other models can be added as needed (Spices, Locations, etc.)
 
