@@ -4,6 +4,7 @@ import datetime
 from functools import wraps
 from uuid import UUID
 
+from sqlalchemy.dialects.postgresql import JSONB
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
@@ -256,6 +257,8 @@ def create_batch(current_user):
         return jsonify({'message': 'Missing fields: spice_id, quantity_g, harvest_date'}), 400
 
     try:
+
+        print(current_user)
         new_batch = Batch(spice_id=data['spice_id'], origin_participant_id=current_user.id, current_owner_id=current_user.id, harvest_date=data['harvest_date'])
         new_batch.stock = BatchStock(qty_g_available=data['quantity_g'])
         db.session.add(new_batch)
