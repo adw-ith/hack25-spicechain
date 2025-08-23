@@ -13,6 +13,19 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
+
+from werkzeug.utils import secure_filename
+import os
+
+# Configure upload folder
+UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads", "harvests")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 # Models
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -44,6 +57,7 @@ class Batches(db.Model):
     spice_id = db.Column(db.Integer, db.ForeignKey('spices.id'), nullable=False)
     quantity_kg = db.Column(db.Float, nullable=False)
     harvest_date = db.Column(db.DateTime, nullable=False)
+    harvest_image = db.Column(db.String(255), nullable=True)  # file path or URL
     farm_location = db.Column(db.String(200))
     farming_method = db.Column(db.String(50))  # organic, conventional
     estimated_grade = db.Column(db.String(20))  # A, B, C
@@ -265,12 +279,22 @@ def register_batch():
     if session['user_type'] != 'farmer':
         return jsonify({'error': 'Only farmers can register batches'}), 403
     
-    data = request.get_json()
+    # Parse form fields
+    data = request.form
     required_fields = ['spice_id', 'quantity_kg', 'harvest_date', 'farm_location']
-    
     for field in required_fields:
         if field not in data:
             return jsonify({'error': f'{field} is required'}), 400
+    
+    # Handle optional image
+    image_url = None
+    if 'harvest_image' in request.files:
+        file = request.files['harvest_image']
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+            image_url = f"/uploads/harvests/{filename}"  # accessible path
     
     # Generate unique batch ID
     batch_id = f"BATCH_{datetime.now().strftime('%Y%m%d')}_{str(uuid.uuid4())[:8].upper()}"
@@ -284,7 +308,8 @@ def register_batch():
         farm_location=data['farm_location'],
         farming_method=data.get('farming_method', 'conventional'),
         estimated_grade=data.get('estimated_grade', 'B'),
-        current_owner_id=session['user_id']
+        current_owner_id=session['user_id'],
+        harvest_image=image_url  # NEW FIELD
     )
     
     db.session.add(batch)
@@ -297,7 +322,7 @@ def register_batch():
         description=f'Batch harvested at {data["farm_location"]}',
         user_id=session['user_id'],
         location=data['farm_location'],
-        event_metadata={'quantity_kg': data['quantity_kg']}
+        event_metadata={'quantity_kg': data['quantity_kg'], 'harvest_image': image_url}
     )
     
     log_action(session['user_id'], 'BATCH_CREATED', 'batch', batch_id)
@@ -305,7 +330,8 @@ def register_batch():
     return jsonify({
         'message': 'Batch registered successfully',
         'batch_id': batch_id,
-        'id': batch.id
+        'id': batch.id,
+        'harvest_image': image_url
     }), 201
 
 @app.route('/api/transaction', methods=['POST'])
