@@ -8,7 +8,7 @@ from functools import wraps
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, supports_credentials=True, origins=["http://localhost:3000"])
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///spicechain.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False

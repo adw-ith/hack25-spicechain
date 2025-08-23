@@ -6,8 +6,12 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [isProducer, setIsProducer] = useState(false); // New state for producer role
-  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null); // New state for location
+  const [role, setRole] = useState<
+    "farmer" | "middleman" | "consumer" | "quality_officer"
+  >("consumer"); // Dropdown role
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(
+    null
+  );
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -23,7 +27,9 @@ export default function LoginPage() {
         },
         (err) => {
           console.error("Geolocation error:", err);
-          setError("Unable to retrieve location. Please enable location services.");
+          setError(
+            "Unable to retrieve location. Please enable location services."
+          );
         }
       );
     } else {
@@ -37,21 +43,25 @@ export default function LoginPage() {
 
     try {
       const endpoint = activeTab === "login" ? "/login" : "/signup";
-      
-      const requestBody = activeTab === "login"
-        ? { username: email, password }
-        : { 
-            username : name, 
-            email, 
-            password,
-            user_type: isProducer ? "producer" : "consumer", // Determine user type
-            location: location,
-          };
+
+      const requestBody =
+        activeTab === "login"
+          ? { username: email, password }
+          : {
+              username: name,
+              email,
+              password,
+              user_type: role, // Role from dropdown
+              location: role === "farmer" ? location : null, // Location only if farmer
+            };
+
       console.log("Request Body:", requestBody);
+
       const res = await fetch(`http://127.0.0.1:5000/api${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
+        credentials: "include",
       });
 
       const data = await res.json();
@@ -111,19 +121,35 @@ export default function LoginPage() {
                 onChange={(e) => setName(e.target.value)}
                 className="bg-slate-900 text-white border border-slate-600 rounded-lg px-4 py-3 focus:ring-2 focus:ring-orange-500 focus:outline-none"
               />
-              <div className="flex items-center gap-2 mt-2">
-                <input
-                  type="checkbox"
-                  id="is-producer"
-                  checked={isProducer}
-                  onChange={(e) => setIsProducer(e.target.checked)}
-                  className="form-checkbox text-orange-500 bg-slate-900 border-slate-600 rounded"
-                />
-                <label htmlFor="is-producer" className="text-slate-400">
-                  Are you a producer?
+
+              {/* Role Dropdown */}
+              <div className="flex flex-col gap-2">
+                <label htmlFor="role" className="text-slate-400 text-sm">
+                  Select Role
                 </label>
+                <select
+                  id="role"
+                  value={role}
+                  onChange={(e) =>
+                    setRole(
+                      e.target.value as
+                        | "farmer"
+                        | "middleman"
+                        | "consumer"
+                        | "quality_officer"
+                    )
+                  }
+                  className="bg-slate-900 text-white border border-slate-600 rounded-lg px-4 py-3 focus:ring-2 focus:ring-orange-500 focus:outline-none"
+                >
+                  <option value="farmer">Farmer</option>
+                  <option value="middleman">Middleman</option>
+                  <option value="consumer">Consumer</option>
+                  <option value="quality_officer">Quality Officer</option>
+                </select>
               </div>
-              {isProducer && (
+
+              {/* Location only for farmers */}
+              {role === "farmer" && (
                 <div className="flex flex-col gap-2">
                   <button
                     type="button"
@@ -134,13 +160,15 @@ export default function LoginPage() {
                   </button>
                   {location && (
                     <p className="text-sm text-green-400">
-                      Location captured: Lat {location.lat.toFixed(4)}, Lng {location.lng.toFixed(4)}
+                      Location captured: Lat {location.lat.toFixed(4)}, Lng{" "}
+                      {location.lng.toFixed(4)}
                     </p>
                   )}
                 </div>
               )}
             </>
           )}
+
           <input
             type="email"
             placeholder="Email Address"

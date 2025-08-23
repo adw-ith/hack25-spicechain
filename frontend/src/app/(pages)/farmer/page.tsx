@@ -112,6 +112,7 @@ export default function FarmerPage() {
           harvest_date: new Date().toISOString(), // for now using current time
           farm_location: "Default Farm", // you can replace with a real input
         }),
+        credentials: "include" // include cookies for session
       });
 
       const data = await response.json();
