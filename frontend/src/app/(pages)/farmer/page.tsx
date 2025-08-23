@@ -1,152 +1,206 @@
 // app/farmer/page.tsx
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+// Define TypeScript interfaces for better type safety
+interface Batch {
+  id: string;
+  spice: string;
+  origin: string;
+  owner: string;
+  harvest_date: string;
+  status: string;
+  qty: string;
+}
+
+interface Spice {
+  id: number;
+  name: string;
+}
+
+interface Participant {
+  id: number;
+  name: string;
+  role: string;
+}
+
+// Define the structure for an item in a new transaction
+interface TransactionItem {
+  sourceBatchId: string;
+  recipientId: string;
+  quantity: string;
+  type: "middleman_transfer" | "consumer_package";
+}
+
+// Boilerplate user data - this would normally come from an auth context
+const currentUser = { id: 1, name: "Farmer A", role: "farmer" };
+
+// Sample Data (replace with API calls in production)
+const sampleBatches = [
+  {
+    "id": "B-9c02b378-f71c-4b5d-9a9e-f0b4d4b1a41a",
+    "spice": "Black Pepper",
+    "origin": "Idukki, Kerala",
+    "owner": "Farmer A",
+    "harvest_date": "2025-08-20",
+    "status": "In Stock",
+    "qty": "50000g"
+  },
+  {
+    "id": "B-a8e5f7c3-2d1b-4b2a-8c7e-e1f0a2d3c4b5",
+    "spice": "Cardamom",
+    "origin": "Vandanmedu, Kerala",
+    "owner": "Farmer A",
+    "harvest_date": "2025-08-15",
+    "status": "In Stock",
+    "qty": "25000g"
+  }
+];
+
+const sampleSpices = [
+  { "id": 1, "name": "Black Pepper" },
+  { "id": 2, "name": "Cardamom" },
+  { "id": 3, "name": "Turmeric" }
+];
+
+const sampleParticipants = [
+  { "id": 2, "name": "Ajay Traders", "role": "Middleman" },
+  { "id": 3, "name": "Ravi Distributors", "role": "Middleman" },
+  { "id": 4, "name": "Spice House", "role": "Consumer" },
+  { "id": 5, "name": "Suresh Groceries", "role": "Consumer" }
+];
 
 export default function FarmerPage() {
-  const [spiceId, setSpiceId] = useState("");
-  const [originLocation, setOriginLocation] = useState("");
-  const [originParticipant, setOriginParticipant] = useState("");
-  const [initialQty, setInitialQty] = useState("");
+  const [batches, setBatches] = useState<Batch[]>(sampleBatches);
+  const [spices, setSpices] = useState<Spice[]>(sampleSpices);
+  const [participants, setParticipants] = useState<Participant[]>(sampleParticipants);
+  const [newTransactionItems, setNewTransactionItems] = useState<TransactionItem[]>(
+    [{ sourceBatchId: "", recipientId: "", quantity: "", type: "middleman_transfer" }]
+  );
 
-  // Dummy dropdown data
-  const spices = [
-    { id: "SP001", name: "Black Pepper" },
-    { id: "SP002", name: "Cardamom" },
-    { id: "SP003", name: "Turmeric" },
-  ];
+  const handleAddItem = () => {
+    setNewTransactionItems([
+      ...newTransactionItems,
+      { sourceBatchId: "", recipientId: "", quantity: "", type: "middleman_transfer" },
+    ]);
+  };
 
-  const participants = [
-    { id: "P001", name: "Farmer A" },
-    { id: "P002", name: "Farmer B" },
-    { id: "P003", name: "Farmer C" },
-  ];
+  const handleRemoveItem = (index: number) => {
+    const items = [...newTransactionItems];
+    items.splice(index, 1);
+    setNewTransactionItems(items);
+  };
 
-  const currentUser = { id: "OWN001", name: "Farmer A" };
-
-  // Dummy batch list
-  const batches = [
-    {
-      id: "BATCH001",
-      spice: "Black Pepper",
-      origin: "Kerala",
-      owner: "Middleman X",
-      harvest_date: "2025-08-10",
-      status: "In Transit",
-      qty: "50kg",
-    },
-    {
-      id: "BATCH002",
-      spice: "Cardamom",
-      origin: "Tamil Nadu",
-      owner: "Consumer Y",
-      harvest_date: "2025-07-22",
-      status: "Delivered",
-      qty: "20kg",
-    },
-    {
-      id: "BATCH003",
-      spice: "Turmeric",
-      origin: "Andhra Pradesh",
-      owner: "Farmer A",
-      harvest_date: "2025-08-01",
-      status: "With Farmer",
-      qty: "100kg",
-    },
-  ];
+  const handleItemChange = (index: number, field: keyof TransactionItem, value: string) => {
+    const items = [...newTransactionItems];
+    items[index] = { ...items[index], [field]: value };
+    setNewTransactionItems(items);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    alert(
-      `Submitted Batch: ${spiceId}, ${originLocation}, ${originParticipant}, ${initialQty}`
-    );
+    console.log("Submitting Transactions:", newTransactionItems);
+    alert("Transaction submitted! Check the console for data.");
   };
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6 overflow-y-auto">
       <div className="max-w-4xl mx-auto flex flex-col gap-8">
-        {/* Form Section */}
+        {/* Transaction Form Section */}
         <div className="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700">
-          <h2 className="text-xl font-bold mb-4">Sell Your Spice</h2>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            {/* Spice Dropdown */}
-            <div>
-              <label className="block mb-1">Spice</label>
-              <select
-                value={spiceId}
-                onChange={(e) => setSpiceId(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2"
-                required
+          <h2 className="text-xl font-bold mb-4">Record a New Sale</h2>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+            {newTransactionItems.map((item, index) => (
+              <div key={index} className="flex flex-col gap-4 p-4 border rounded-lg border-slate-700">
+                <h3 className="text-lg font-semibold">Sale Item {index + 1}</h3>
+                <div className="flex gap-4">
+                  {/* Source Batch Dropdown */}
+                  <div className="flex-1">
+                    <label className="block mb-1 text-sm">Select Source Batch</label>
+                    <select
+                      value={item.sourceBatchId}
+                      onChange={(e) => handleItemChange(index, "sourceBatchId", e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+                      required
+                    >
+                      <option value="">Select Batch</option>
+                      {batches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.id} ({b.spice}, {b.qty})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Recipient ID (Manual Input) */}
+                  <div className="flex-1">
+                    <label className="block mb-1 text-sm">Recipient ID</label>
+                    <input
+                      type="text"
+                      value={item.recipientId}
+                      onChange={(e) => handleItemChange(index, "recipientId", e.target.value)}
+                      placeholder="e.g., 2, 3, 4"
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  {/* Quantity */}
+                  <div className="flex-1">
+                    <label className="block mb-1 text-sm">Quantity (grams)</label>
+                    <input
+                      type="text"
+                      pattern="[0-9]*"
+                      value={item.quantity}
+                      onChange={(e) => handleItemChange(index, "quantity", e.target.value)}
+                      placeholder="e.g., 5000"
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+                      required
+                    />
+                  </div>
+
+                  {/* Transaction Type */}
+                  <div className="flex-1">
+                    <label className="block mb-1 text-sm">Transaction Type</label>
+                    <select
+                      value={item.type}
+                      onChange={(e) => handleItemChange(index, "type", e.target.value as "middleman_transfer" | "consumer_package")}
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm"
+                    >
+                      <option value="middleman_transfer">Sell to Middleman</option>
+                      <option value="consumer_package">Create Consumer Package</option>
+                    </select>
+                  </div>
+                </div>
+
+                {newTransactionItems.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveItem(index)}
+                    className="self-end text-sm text-red-400 hover:text-red-500"
+                  >
+                    Remove Item
+                  </button>
+                )}
+              </div>
+            ))}
+            <div className="flex justify-between items-center mt-2">
+              <button
+                type="button"
+                onClick={handleAddItem}
+                className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-all text-sm"
               >
-                <option value="">Select Spice</option>
-                {spices.map((spice) => (
-                  <option key={spice.id} value={spice.id}>
-                    {spice.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Location */}
-            <div>
-              <label className="block mb-1">Origin Location</label>
-              <input
-                type="text"
-                value={originLocation}
-                onChange={(e) => setOriginLocation(e.target.value)}
-                placeholder="Enter location (e.g., Kerala)"
-                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2"
-                required
-              />
-            </div>
-
-            {/* Participant Dropdown */}
-            <div>
-              <label className="block mb-1">Origin Participant</label>
-              <select
-                value={originParticipant}
-                onChange={(e) => setOriginParticipant(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2"
-                required
+                Add Another Item
+              </button>
+              <button
+                type="submit"
+                className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg transition-all"
               >
-                <option value="">Select Participant</option>
-                {participants.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                Complete Sale
+              </button>
             </div>
-
-            {/* Quantity */}
-            <div>
-              <label className="block mb-1">Initial Quantity (grams)</label>
-              <input
-                type="number"
-                value={initialQty}
-                onChange={(e) => setInitialQty(e.target.value)}
-                placeholder="e.g., 5000"
-                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2"
-                required
-              />
-            </div>
-
-            {/* Owner Auto-filled */}
-            <div>
-              <label className="block mb-1">Current Owner</label>
-              <input
-                type="text"
-                value={currentUser.name}
-                disabled
-                className="w-full bg-slate-700 text-slate-300 rounded-lg px-3 py-2 cursor-not-allowed"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg transition-all"
-            >
-              Submit
-            </button>
           </form>
         </div>
 
@@ -162,34 +216,42 @@ export default function FarmerPage() {
                   <th className="p-2">Origin</th>
                   <th className="p-2">Owner</th>
                   <th className="p-2">Harvest Date</th>
-                  <th className="p-2">Status</th>
+                  <th className="p-2 whitespace-nowrap">Status</th>
                   <th className="p-2">Qty</th>
                 </tr>
               </thead>
               <tbody>
-                {batches.map((b) => (
-                  <tr key={b.id} className="border-b border-slate-700 text-sm">
-                    <td className="p-2">{b.id}</td>
-                    <td className="p-2">{b.spice}</td>
-                    <td className="p-2">{b.origin}</td>
-                    <td className="p-2">{b.owner}</td>
-                    <td className="p-2">{b.harvest_date}</td>
-                    <td className="p-2">
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs ${
-                          b.status === "Delivered"
-                            ? "bg-green-600"
-                            : b.status === "In Transit"
-                            ? "bg-yellow-600"
-                            : "bg-blue-600"
-                        }`}
-                      >
-                        {b.status}
-                      </span>
+                {batches.length > 0 ? (
+                  batches.map((b) => (
+                    <tr key={b.id} className="border-b border-slate-700 text-sm">
+                      <td className="p-2">{b.id}</td>
+                      <td className="p-2">{b.spice}</td>
+                      <td className="p-2">{b.origin}</td>
+                      <td className="p-2">{b.owner}</td>
+                      <td className="p-2">{b.harvest_date}</td>
+                      <td className="p-2 whitespace-nowrap">
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs ${
+                            b.status === "Delivered"
+                              ? "bg-green-600"
+                              : b.status === "In Stock"
+                              ? "bg-blue-600"
+                              : "bg-yellow-600"
+                          }`}
+                        >
+                          {b.status}
+                        </span>
+                      </td>
+                      <td className="p-2">{b.qty}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="p-4 text-center text-slate-400">
+                      No batches found.
                     </td>
-                    <td className="p-2">{b.qty}</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
