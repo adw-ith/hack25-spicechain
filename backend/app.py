@@ -3,14 +3,15 @@ import json
 import datetime
 from functools import wraps
 from uuid import UUID
-from flask_cors import CORS
-from flask_migrate import Migrate
 
-
+from sqlalchemy.dialects.postgresql import JSONB
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text, exc
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
+from decimal import Decimal
 
 # ---------------------------------------
 # Flask & Database Config
@@ -18,366 +19,483 @@ import jwt
 app = Flask(__name__)
 CORS(app)
 
-
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "change-me-in-prod")
+# REQUIRED ENV VARS:
+#   SECRET_KEY
+#   DATABASE_URL (Supabase "Connection string" > URI)
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "a-very-secret-key-for-dev")
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
-    "DATABASE_URL")
+    "DATABASE_URL",
+    "postgresql://postgres:postgres@localhost:5432/postgres" # Default for local dev
+)
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMY_ECHO"] = False # Set to True to see generated SQL
 
 db = SQLAlchemy(app)
-migrate = Migrate(app, db)
 
 # ---------------------------------------
-# Local Auth Table (separate from participants)
+# Helper Functions & Custom JSON Encoder
 # ---------------------------------------
-class User(db.Model):
-    __tablename__ = "auth_users"
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(255), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (datetime.datetime, datetime.date)):
+            return obj.isoformat()
+        if isinstance(obj, UUID):
+            return str(obj)
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, bytes):
+            return obj.hex()
+        return super().default(self, obj)
 
-# ---------------------------------------
-# Helpers
-# ---------------------------------------
+app.json_encoder = CustomJSONEncoder
+
 def rows_to_dicts(rows):
-    # Works with SQLAlchemy Row objects
     return [dict(r._mapping) for r in rows]
 
-def row_to_dict(row):
-    return dict(row._mapping) if row else None
+# ---------------------------------------
+# SQLAlchemy Models (Reflecting your schema)
+# ---------------------------------------
+# ---------------------------------------
+# SQLAlchemy Models (Reflecting your schema)
+# ---------------------------------------
 
+class Participant(db.Model):
+    __tablename__ = 'participants'
+    id = db.Column(db.BigInteger, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(255), unique=True)
+    password_hash = db.Column(db.Text)
+    role = db.Column(db.String(50), nullable=False) # Maps to the 'role' enum in SQL
+    contact_info = db.Column(db.JSONB, default=lambda: {})
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+
+class Location(db.Model):
+    __tablename__ = 'locations'
+    id = db.Column(db.BigInteger, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    kind = db.Column(db.String(50))
+    address = db.Column(db.Text)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+
+class Spice(db.Model):
+    __tablename__ = 'spices'
+    id = db.Column(db.BigInteger, primary_key=True)
+    name = db.Column(db.String(120), unique=True, nullable=False)
+    varietal = db.Column(db.String(120))
+    meta = db.Column(db.JSONB, default=lambda: {})
+
+class Batch(db.Model):
+    __tablename__ = 'batches'
+    id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    spice_id = db.Column(db.BigInteger, db.ForeignKey('spices.id'), nullable=False)
+    origin_location_id = db.Column(db.BigInteger, db.ForeignKey('locations.id'))
+    origin_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    harvest_date = db.Column(db.Date)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    current_owner_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default='Active')
+
+    stock = db.relationship('BatchStock', backref='batch', uselist=False, cascade="all, delete-orphan")
+    origin_participant = db.relationship('Participant', foreign_keys=[origin_participant_id])
+    current_owner = db.relationship('Participant', foreign_keys=[current_owner_id])
+    spice = db.relationship('Spice')
+
+class BatchStock(db.Model):
+    __tablename__ = 'batch_stock'
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='CASCADE'), primary_key=True)
+    qty_g_available = db.Column(db.Numeric(18, 3), nullable=False)
+
+class BatchComposition(db.Model):
+    __tablename__ = 'batch_compositions'
+    id = db.Column(db.BigInteger, primary_key=True)
+    child_batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='CASCADE'), nullable=False)
+    source_batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='RESTRICT'), nullable=False)
+    qty_g_used = db.Column(db.Numeric(18, 3), nullable=False)
+    note = db.Column(db.Text)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+
+class BatchEvent(db.Model):
+    __tablename__ = 'batch_events'
+    id = db.Column(db.BigInteger, primary_key=True)
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='CASCADE'), nullable=False)
+    event_type = db.Column(db.String(50), nullable=False) # Maps to the 'batch_event_type' enum
+    actor_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    at_location_id = db.Column(db.BigInteger, db.ForeignKey('locations.id'))
+    event_time = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    details = db.Column(db.JSONB, nullable=False, default=lambda: {})
+    from_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'))
+    to_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'))
+    qty_g_delta = db.Column(db.Numeric(18, 3))
+    prev_event_hash = db.Column(db.LargeBinary)
+    event_hash = db.Column(db.LargeBinary, nullable=False)
+
+class Transfer(db.Model):
+    __tablename__ = 'transfers'
+    id = db.Column(db.BigInteger, primary_key=True)
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='RESTRICT'), nullable=False)
+    from_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    to_participant_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    qty_g = db.Column(db.Numeric(18, 3), nullable=False)
+    price_per_kg = db.Column(db.Numeric(12, 2))
+    transaction_time = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    meta = db.Column(db.JSONB, default=lambda: {})
+
+class Package(db.Model):
+    __tablename__ = 'packages'
+    id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    label_code = db.Column(db.Text, unique=True, nullable=False)
+    net_qty_g = db.Column(db.Numeric(18, 3), nullable=False)
+    packaged_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    packager_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    current_owner_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default='InStock')
+
+class PackageContent(db.Model):
+    __tablename__ = 'package_contents'
+    package_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('packages.id', ondelete='CASCADE'), primary_key=True)
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='RESTRICT'), primary_key=True)
+    qty_g_from_batch = db.Column(db.Numeric(18, 3), nullable=False)
+
+class PackageEvent(db.Model):
+    __tablename__ = 'package_events'
+    id = db.Column(db.BigInteger, primary_key=True)
+    package_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('packages.id', ondelete='CASCADE'), nullable=False)
+    event_type = db.Column(db.String(50), nullable=False) # Maps to the 'package_event_type' enum
+    actor_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'), nullable=False)
+    event_time = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    details = db.Column(db.JSONB, nullable=False, default=lambda: {})
+    prev_event_hash = db.Column(db.LargeBinary)
+    event_hash = db.Column(db.LargeBinary, nullable=False)
+
+class QATest(db.Model):
+    __tablename__ = 'qa_tests'
+    id = db.Column(db.BigInteger, primary_key=True)
+    batch_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('batches.id', ondelete='CASCADE'))
+    package_id = db.Column(db.dialects.postgresql.UUID(as_uuid=True), db.ForeignKey('packages.id', ondelete='CASCADE'))
+    test_type = db.Column(db.String(60), nullable=False)
+    result = db.Column(db.JSONB, nullable=False)
+    tested_by_id = db.Column(db.BigInteger, db.ForeignKey('participants.id'))
+    tested_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+
+class AuditLog(db.Model):
+    __tablename__ = 'audit_log'
+    id = db.Column(db.BigInteger, primary_key=True)
+    table_name = db.Column(db.Text, nullable=False)
+    row_pk = db.Column(db.Text, nullable=False)
+    op = db.Column(db.String(10), nullable=False)
+    at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=text("now()"))
+    actor_id = db.Column(db.BigInteger)
+    old_row = db.Column(db.JSONB)
+    new_row = db.Column(db.JSONB)
+
+# Other models can be added as needed (Spices, Locations, etc.)
+
+# ---------------------------------------
+# Auth Decorator & Routes
+# ---------------------------------------
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get("x-access-token") or request.headers.get("Authorization", "").replace("Bearer ", "")
+        token = request.headers.get('x-access-token')
         if not token:
-            return jsonify({"error": "Token missing"}), 401
+            return jsonify({'message': 'Token is missing!'}), 401
         try:
-            data = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
-            current_user = db.session.get(User, data["id"])
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            current_user = Participant.query.get(data['id'])
             if not current_user:
-                return jsonify({"error": "User not found"}), 401
+                 return jsonify({'message': 'User not found!'}), 401
         except Exception as e:
-            return jsonify({"error": "Invalid token", "detail": str(e)}), 401
+            return jsonify({'message': 'Token is invalid!', 'error': str(e)}), 401
         return f(current_user, *args, **kwargs)
     return decorated
 
-def validate_uuid(u):
+@app.route('/auth/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    if not all(k in data for k in ['name', 'email', 'password', 'role']):
+        return jsonify({'message': 'Missing required fields'}), 400
+    hashed_password = generate_password_hash(data['password'])
+    new_user = Participant(name=data['name'], email=data['email'], password_hash=hashed_password, role=data['role'])
     try:
-        UUID(str(u))
-        return True
-    except Exception:
-        return False
+        db.session.add(new_user)
+        db.session.commit()
+        return jsonify({'message': 'New participant registered!'}), 201
+    except exc.IntegrityError:
+        db.session.rollback()
+        return jsonify({'message': 'Email already exists.'}), 409
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'Could not register.', 'error': str(e)}), 500
 
-# ---------------------------------------
-# Auth Routes
-# ---------------------------------------
-@app.post("/signup")
-def signup():
-    data = request.get_json(force=True)
-    email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
-    if not email or not password:
-        return jsonify({"error": "email and password are required"}), 400
-    if User.query.filter_by(email=email).first():
-        return jsonify({"error": "email already in use"}), 409
-    hashed_pw = generate_password_hash(password, method="pbkdf2:sha256")
-    user = User(email=email, password_hash=hashed_pw)
-    db.session.add(user)
-    db.session.commit()
-    return jsonify({"message": "user created"}), 201
-
-@app.post("/login")
+@app.route('/auth/login', methods=['POST'])
 def login():
-    data = request.get_json(force=True)
-    email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
-    user = User.query.filter_by(email=email).first()
-    if not user or not check_password_hash(user.password_hash, password):
-        return jsonify({"error": "invalid credentials"}), 401
-    token = jwt.encode(
-        {"id": user.id, "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=12)},
-        app.config["SECRET_KEY"], algorithm="HS256"
-    )
-    return jsonify({"token": token})
+    data = request.get_json()
+    if not data or not data.get('email') or not data.get('password'):
+        return jsonify({'message': 'Could not verify'}), 401
+    user = Participant.query.filter_by(email=data['email']).first()
+    if not user or not check_password_hash(user.password_hash, data['password']):
+        return jsonify({'message': 'Invalid email or password'}), 401
+    token = jwt.encode({
+        'id': user.id,
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(days=1)
+    }, app.config['SECRET_KEY'], "HS256")
+    return jsonify({'token': token})
 
 # ---------------------------------------
-# Participants
+# Core Logic: Batches & Transactions
 # ---------------------------------------
-@app.post("/participants")
-@token_required
-def add_participant(current_user):
-    data = request.get_json(force=True)
-    sql = """
-      INSERT INTO participants (name, role, contact_info)
-      VALUES (%s, %s, %s)
-      RETURNING id, name, role, contact_info, created_at;
-    """
-    res = db.session.execute(sql, (
-        data["name"], data["role"], json.dumps(data.get("contact_info", {}))
-    )).fetchone()
-    db.session.commit()
-    return jsonify(row_to_dict(res)), 201
 
-@app.get("/participants")
-@token_required
-def list_participants(current_user):
-    res = db.session.execute("""
-      SELECT id, name, role, contact_info, created_at
-      FROM participants
-      ORDER BY id DESC;
-    """).fetchall()
-    return jsonify(rows_to_dicts(res))
-
-# ---------------------------------------
-# Batches
-# ---------------------------------------
-@app.post("/batches")
+@app.route('/batches', methods=['POST'])
 @token_required
 def create_batch(current_user):
-    data = request.get_json(force=True)
-    # Required: spice_id, origin_participant_id, current_owner_id, initial_qty_g
-    sql = """
-      INSERT INTO batches (spice_id, origin_location_id, origin_participant_id,
-                           harvest_date, current_owner_id)
-      VALUES (%s, %s, %s, %s, %s)
-      RETURNING id;
-    """
-    res = db.session.execute(sql, (
-        data["spice_id"],
-        data.get("origin_location_id"),
-        data["origin_participant_id"],
-        data.get("harvest_date"),
-        data["current_owner_id"]
-    )).fetchone()
-    batch_id = res[0]
+    """(Farmer only) Create a new origin batch."""
+    if current_user.role != 'Farmer':
+        return jsonify({'message': 'Only Farmers can create origin batches.'}), 403
+    data = request.get_json()
+    if not all(k in data for k in ['spice_id', 'quantity_g', 'harvest_date']):
+        return jsonify({'message': 'Missing fields: spice_id, quantity_g, harvest_date'}), 400
 
-    # Initialize stock in grams
-    db.session.execute(
-        "INSERT INTO batch_stock (batch_id, qty_g_available) VALUES (%s, %s);",
-        (batch_id, data["initial_qty_g"])
-    )
-    # Optional: emit BATCH_CREATED event (manual explicit insert)
-    db.session.execute(
-        """
-        INSERT INTO batch_events (batch_id, event_type, actor_id, details, qty_g_delta)
-        VALUES (%s, 'BATCH_CREATED', %s, %s, %s);
-        """,
-        (batch_id, data["current_owner_id"], json.dumps({"note": "initial creation"}), data["initial_qty_g"])
-    )
-    db.session.commit()
-    return jsonify({"batch_id": str(batch_id)}), 201
+    try:
 
-@app.get("/batches")
+        print(current_user)
+        new_batch = Batch(spice_id=data['spice_id'], origin_participant_id=current_user.id, current_owner_id=current_user.id, harvest_date=data['harvest_date'])
+        new_batch.stock = BatchStock(qty_g_available=data['quantity_g'])
+        db.session.add(new_batch)
+        db.session.flush()
+
+        # Manually create the BATCH_CREATED event
+        event_sql = text("""
+            INSERT INTO batch_events (batch_id, event_type, actor_id, details)
+            VALUES (:b_id, 'BATCH_CREATED', :a_id, :details)
+        """)
+        db.session.execute(event_sql, {'b_id': new_batch.id, 'a_id': current_user.id, 'details': json.dumps({'initial_qty_g': data['quantity_g'], 'harvest_date': data['harvest_date']})})
+        db.session.commit()
+        return jsonify({'message': 'Batch created successfully', 'batch_id': new_batch.id}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'Failed to create batch', 'error': str(e)}), 500
+
+@app.route('/batches/transfer', methods=['POST'])
 @token_required
-def list_batches(current_user):
-    res = db.session.execute("""
-      SELECT b.id, b.spice_id, b.origin_location_id, b.origin_participant_id,
-             b.harvest_date, b.created_at, b.current_owner_id, b.status,
-             s.qty_g_available
-      FROM batches b
-      JOIN batch_stock s ON s.batch_id = b.id
-      ORDER BY b.created_at DESC;
-    """).fetchall()
-    return jsonify(rows_to_dicts(res))
+def transfer_batch(current_user):
+    """Transfer a quantity of a batch to another participant."""
+    data = request.get_json()
+    if not all(k in data for k in ['batch_id', 'to_participant_id', 'quantity_g']):
+        return jsonify({'message': 'Missing fields: batch_id, to_participant_id, quantity_g'}), 400
 
-@app.get("/batches/<batch_id>/timeline")
+    batch = Batch.query.get(data['batch_id'])
+    if not batch or batch.current_owner_id != current_user.id:
+        return jsonify({'message': 'Batch not found or you are not the owner.'}), 404
+
+    if batch.stock.qty_g_available < Decimal(data['quantity_g']):
+        return jsonify({'message': 'Insufficient quantity available for transfer.'}), 400
+
+    try:
+        # The DB trigger 'trigger_update_batch_stock_on_transfer' handles all logic.
+        # We just need to insert into the transfers table.
+        new_transfer = Transfer(
+            batch_id=data['batch_id'],
+            from_participant_id=current_user.id,
+            to_participant_id=data['to_participant_id'],
+            qty_g=data['quantity_g'],
+            price_per_kg=data.get('price_per_kg')
+        )
+        db.session.add(new_transfer)
+        # Note: The trigger also updates batch owner if quantity becomes zero.
+        # We must manually update the owner on the new partial batch.
+        new_owner_batch = Batch(
+             spice_id=batch.spice_id,
+             origin_participant_id=batch.origin_participant_id,
+             current_owner_id=data['to_participant_id'],
+             harvest_date=batch.harvest_date
+        )
+        new_owner_batch.stock = BatchStock(qty_g_available=data['quantity_g'])
+        db.session.add(new_owner_batch)
+        db.session.flush()
+
+        # Record composition
+        composition = BatchComposition(child_batch_id=new_owner_batch.id, source_batch_id=batch.id, qty_g_used=data['quantity_g'])
+        db.session.add(composition)
+        db.session.commit()
+        return jsonify({'message': 'Transfer recorded successfully.'}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'Failed to record transfer', 'error': str(e)}), 500
+
+
+@app.route('/batches/split', methods=['POST'])
 @token_required
-def get_batch_timeline(current_user, batch_id):
-    if not validate_uuid(batch_id):
-        return jsonify({"error": "invalid batch_id"}), 400
-    events = db.session.execute("""
-      SELECT id, event_time, event_type::text AS event_type, actor_id,
-             from_participant_id, to_participant_id, qty_g_delta,
-             details, encode(event_hash, 'hex') AS event_hash,
-             encode(prev_event_hash, 'hex') AS prev_event_hash
-      FROM batch_events
-      WHERE batch_id = %s
-      ORDER BY event_time ASC, id ASC;
-    """, (batch_id,)).fetchall()
-    return jsonify(rows_to_dicts(events))
+def split_batch(current_user):
+    """Split a source batch into multiple new child batches."""
+    data = request.get_json()
+    if not all(k in data for k in ['source_batch_id', 'child_batches']):
+        return jsonify({'message': 'Missing fields: source_batch_id, child_batches'}), 400
+    if not isinstance(data['child_batches'], list) or not data['child_batches']:
+        return jsonify({'message': 'child_batches must be a non-empty list.'}), 400
 
-@app.post("/batches/<batch_id>/events")
-@token_required
-def add_batch_event(current_user, batch_id):
-    if not validate_uuid(batch_id):
-        return jsonify({"error": "invalid batch_id"}), 400
-    data = request.get_json(force=True)
-    # event_type must be valid per ENUM
-    res = db.session.execute("""
-      INSERT INTO batch_events (
-        batch_id, event_type, actor_id, at_location_id,
-        details, from_participant_id, to_participant_id, qty_g_delta
-      )
-      VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-      RETURNING id, event_time, encode(event_hash,'hex') AS event_hash;
-    """, (
-        batch_id, data["event_type"], data["actor_id"], data.get("at_location_id"),
-        json.dumps(data.get("details", {})),
-        data.get("from_participant_id"), data.get("to_participant_id"),
-        data.get("qty_g_delta")
-    )).fetchone()
-    db.session.commit()
-    return jsonify(row_to_dict(res)), 201
+    source_batch = Batch.query.get(data['source_batch_id'])
+    if not source_batch or source_batch.current_owner_id != current_user.id:
+        return jsonify({'message': 'Source batch not found or you are not the owner.'}), 404
 
-# ---------------------------------------
-# Transfers (batch-level ownership movement)
-# DB triggers should enforce stock & update events; here we only insert
-# ---------------------------------------
-@app.post("/transfers")
-@token_required
-def create_transfer(current_user):
-    data = request.get_json(force=True)
-    res = db.session.execute("""
-      INSERT INTO transfers (batch_id, from_user_id, to_user_id, qty_g, price_per_kg, meta)
-      VALUES (%s, %s, %s, %s, %s, %s)
-      RETURNING id, transaction_time;
-    """, (
-        data["batch_id"], data["from_user_id"], data["to_user_id"],
-        data["qty_g"], data.get("price_per_kg"), json.dumps(data.get("meta", {}))
-    )).fetchone()
-    db.session.commit()
-    return jsonify(row_to_dict(res)), 201
+    total_split_qty = sum(Decimal(c.get('quantity_g', 0)) for c in data['child_batches'])
+    if total_split_qty > source_batch.stock.qty_g_available:
+        return jsonify({'message': 'Total split quantity exceeds available stock.'}), 400
 
-# ---------------------------------------
-# Packages
-# ---------------------------------------
-@app.post("/packages")
+    try:
+        # 1. Deduct stock from source
+        source_batch.stock.qty_g_available -= total_split_qty
+        
+        # 2. Create child batches and compositions
+        for child_data in data['child_batches']:
+            qty = Decimal(child_data['quantity_g'])
+            new_batch = Batch(spice_id=source_batch.spice_id, origin_participant_id=source_batch.origin_participant_id, current_owner_id=current_user.id, harvest_date=source_batch.harvest_date)
+            new_batch.stock = BatchStock(qty_g_available=qty)
+            db.session.add(new_batch)
+            db.session.flush() # Get the new_batch.id
+            
+            composition = BatchComposition(child_batch_id=new_batch.id, source_batch_id=source_batch.id, qty_g_used=qty)
+            db.session.add(composition)
+
+        # 3. Create a SPLIT event
+        event_sql = text("""
+            INSERT INTO batch_events (batch_id, event_type, actor_id, details, qty_g_delta)
+            VALUES (:b_id, 'SPLIT', :a_id, :details, :delta)
+        """)
+        db.session.execute(event_sql, {'b_id': source_batch.id, 'a_id': current_user.id, 'details': json.dumps({'children': [c for c in data['child_batches']]}), 'delta': -total_split_qty})
+
+        db.session.commit()
+        return jsonify({'message': 'Batch split successfully.'}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'Failed to split batch', 'error': str(e)}), 500
+
+@app.route('/packages', methods=['POST'])
 @token_required
 def create_package(current_user):
-    data = request.get_json(force=True)
-    # contents: [{batch_id, qty_g_from_batch}, ...]
-    res = db.session.execute("""
-      INSERT INTO packages (label_code, net_qty_g, packager_id, current_owner_id)
-      VALUES (%s, %s, %s, %s)
-      RETURNING id;
-    """, (
-        data["label_code"], data["net_qty_g"], data["packager_id"], data["current_owner_id"]
-    )).fetchone()
-    package_id = res[0]
+    """Create a final consumer package from one or more batches."""
+    data = request.get_json()
+    if not all(k in data for k in ['label_code', 'net_qty_g', 'contents']):
+        return jsonify({'message': 'Missing fields: label_code, net_qty_g, contents'}), 400
 
-    # Insert contents (debited by DB stock triggers if you added them; otherwise ensure you call enforce fn)
-    for c in data["contents"]:
-        db.session.execute("""
-          INSERT INTO package_contents (package_id, batch_id, qty_g_from_batch)
-          VALUES (%s, %s, %s);
-        """, (package_id, c["batch_id"], c["qty_g_from_batch"]))
-
-        # Optional: emit one batch event per contributing batch (explicit)
-        db.session.execute("""
-          INSERT INTO batch_events (batch_id, event_type, actor_id, details, qty_g_delta)
-          VALUES (%s, 'PACKAGE_CREATED', %s, %s, %s);
-        """, (
-            c["batch_id"], data["packager_id"],
-            json.dumps({"package_id": str(package_id), "label_code": data["label_code"]}),
-            -abs(c["qty_g_from_batch"])
-        ))
-
-    # Also emit a package event
-    db.session.execute("""
-      INSERT INTO package_events (package_id, event_type, actor_id, details)
-      VALUES (%s, 'PACKAGE_CREATED', %s, %s);
-    """, (package_id, data["packager_id"], json.dumps({"label_code": data["label_code"]})))
-
-    db.session.commit()
-    return jsonify({"package_id": str(package_id)}), 201
-
-@app.post("/packages/<package_id>/events")
-@token_required
-def add_package_event(current_user, package_id):
-    if not validate_uuid(package_id):
-        return jsonify({"error": "invalid package_id"}), 400
-    data = request.get_json(force=True)
-    res = db.session.execute("""
-      INSERT INTO package_events (package_id, event_type, actor_id, details)
-      VALUES (%s, %s, %s, %s)
-      RETURNING id, event_time, encode(event_hash,'hex') AS event_hash;
-    """, (package_id, data["event_type"], data["actor_id"], json.dumps(data.get("details", {})))).fetchone()
-    db.session.commit()
-    return jsonify(row_to_dict(res)), 201
-
-@app.get("/packages/<package_id>/timeline")
-@token_required
-def get_package_timeline_by_uuid(current_user, package_id):
-    if not validate_uuid(package_id):
-        return jsonify({"error": "invalid package_id"}), 400
-    res = db.session.execute("""
-      SELECT id, event_time, event_type::text AS event_type, actor_id,
-             details, encode(event_hash,'hex') AS event_hash,
-             encode(prev_event_hash,'hex') AS prev_event_hash
-      FROM package_events
-      WHERE package_id = %s
-      ORDER BY event_time ASC, id ASC;
-    """, (package_id,)).fetchall()
-    return jsonify(rows_to_dicts(res))
-
-@app.get("/packages/label/<label_code>/timeline")
-@token_required
-def get_package_timeline_by_label(current_user, label_code):
-    res = db.session.execute("""
-      SELECT pe.id, pe.event_time, pe.event_type::text AS event_type, pe.actor_id,
-             pe.details, encode(pe.event_hash,'hex') AS event_hash,
-             encode(pe.prev_event_hash,'hex') AS prev_event_hash
-      FROM package_events pe
-      JOIN packages p ON p.id = pe.package_id
-      WHERE p.label_code = %s
-      ORDER BY pe.event_time ASC, pe.id ASC;
-    """, (label_code,)).fetchall()
-    return jsonify(rows_to_dicts(res))
-
-# Trace: label_code → source batches → origins
-@app.get("/packages/<label_code>/trace")
-@token_required
-def trace_package(current_user, label_code):
-    res = db.session.execute("""
-      WITH RECURSIVE src_batches AS (
-        SELECT pc.batch_id, NULL::UUID AS parent
-        FROM packages p
-        JOIN package_contents pc ON pc.package_id = p.id
-        WHERE p.label_code = %s
-        UNION ALL
-        SELECT bc.source_batch_id, bc.child_batch_id
-        FROM batch_compositions bc
-        JOIN src_batches sb ON sb.batch_id = bc.child_batch_id
-      )
-      SELECT DISTINCT b.id AS batch_id, b.origin_participant_id, b.origin_location_id
-      FROM src_batches sb
-      JOIN batches b ON b.id = sb.batch_id;
-    """, (label_code,)).fetchall()
-    return jsonify(rows_to_dicts(res))
-
-# ---------------------------------------
-# QA Tests
-# ---------------------------------------
-@app.post("/qa")
-@token_required
-def add_qa_test(current_user):
-    data = request.get_json(force=True)
-    res = db.session.execute("""
-      INSERT INTO qa_tests (batch_id, package_id, test_type, result, tested_by_id)
-      VALUES (%s, %s, %s, %s, %s)
-      RETURNING id, tested_at;
-    """, (
-        data.get("batch_id"), data.get("package_id"),
-        data["test_type"], json.dumps(data["result"]), data.get("tested_by_id")
-    )).fetchone()
-    db.session.commit()
-    return jsonify(row_to_dict(res)), 201
-
-# ---------------------------------------
-# Health check
-# ---------------------------------------
-@app.get("/healthz")
-def health():
     try:
-        db.session.execute("SELECT 1;")
-        return jsonify({"ok": True})
+        # Start transaction
+        package_sql = text("""
+            INSERT INTO packages (label_code, net_qty_g, packager_id, current_owner_id)
+            VALUES (:lc, :n_qty, :p_id, :o_id) RETURNING id;
+        """)
+        result = db.session.execute(package_sql, {'lc': data['label_code'], 'n_qty': data['net_qty_g'], 'p_id': current_user.id, 'o_id': current_user.id})
+        package_id = result.scalar_one()
+
+        for content in data['contents']:
+            # The trigger 'trigger_update_batch_stock_on_package' handles stock deduction
+            content_sql = text("""
+                INSERT INTO package_contents (package_id, batch_id, qty_g_from_batch)
+                VALUES (:p_id, :b_id, :qty);
+            """)
+            db.session.execute(content_sql, {'p_id': package_id, 'b_id': content['batch_id'], 'qty': content['qty_g_from_batch']})
+            # Also create a PACKAGE_CREATED event for the source batch
+            event_sql = text("""
+                INSERT INTO batch_events (batch_id, event_type, actor_id, details, qty_g_delta)
+                VALUES (:b_id, 'PACKAGE_CREATED', :a_id, :details, :delta);
+            """)
+            db.session.execute(event_sql, {'b_id': content['batch_id'], 'a_id': current_user.id, 'details': json.dumps({'package_id': str(package_id), 'label_code': data['label_code']}), 'delta': -Decimal(content['qty_g_from_batch'])})
+
+        db.session.commit()
+        return jsonify({'message': 'Package created successfully', 'package_id': package_id}), 201
+    except exc.IntegrityError as e:
+        db.session.rollback()
+        if 'package_contents_batch_id_fkey' in str(e.orig):
+            return jsonify({'message': 'One or more source batches do not exist.'}), 404
+        if 'packages_label_code_key' in str(e.orig):
+            return jsonify({'message': 'This label code is already in use.'}), 409
+        return jsonify({'message': 'Database integrity error.', 'error': str(e)}), 400
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        db.session.rollback()
+        return jsonify({'message': 'Failed to create package', 'error': str(e)}), 500
+
 
 # ---------------------------------------
-# Run
+# Public Verification Route
 # ---------------------------------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
+@app.route('/verify/<label_code>', methods=['GET'])
+def verify_package_history(label_code):
+    """Public endpoint to get the full farm-to-consumer history of a package."""
+    sql = text("""
+    WITH RECURSIVE full_lineage AS (
+        -- Anchor: Start with the batches directly in the package
+        SELECT 
+            pc.batch_id as lineage_batch_id,
+            1 as depth
+        FROM packages p
+        JOIN package_contents pc ON p.id = pc.package_id
+        WHERE p.label_code = :label_code
+
+        UNION ALL
+
+        -- Recursive step: Find all parent batches
+        SELECT
+            bc.source_batch_id as lineage_batch_id,
+            fl.depth + 1
+        FROM full_lineage fl
+        JOIN batch_compositions bc ON fl.lineage_batch_id = bc.child_batch_id
+    )
+    -- Final SELECT: Get all events for all batches in the entire lineage
+    SELECT 
+        -- Event Details
+        be.event_time,
+        be.event_type,
+        be.details,
+        be.qty_g_delta,
+        
+        -- Batch Details
+        b.id as batch_id,
+        b.harvest_date,
+        s.name as spice_name,
+        s.varietal as spice_varietal,
+
+        -- Actor Details
+        actor.name as actor_name,
+        actor.role as actor_role,
+        
+        -- Location Details
+        loc.name as location_name
+    FROM full_lineage fl
+    JOIN batch_events be ON fl.lineage_batch_id = be.batch_id
+    JOIN batches b ON be.batch_id = b.id
+    JOIN spices s ON b.spice_id = s.id
+    JOIN participants actor ON be.actor_id = actor.id
+    LEFT JOIN locations loc ON be.at_location_id = loc.id
+    ORDER BY be.event_time ASC;
+    """)
+
+    package_info_sql = text("""
+        SELECT p.packaged_at, p.net_qty_g, pr.name as packager_name
+        FROM packages p
+        JOIN participants pr ON p.packager_id = pr.id
+        WHERE p.label_code = :label_code;
+    """)
+
+    try:
+        package_res = db.session.execute(package_info_sql, {'label_code': label_code}).first()
+        if not package_res:
+            return jsonify({'message': 'Package with this label code not found.'}), 404
+        
+        history_res = db.session.execute(sql, {'label_code': label_code}).fetchall()
+        
+        response = {
+            'label_code': label_code,
+            'packaged_at': package_res.packaged_at,
+            'packager': package_res.packager_name,
+            'net_quantity_g': package_res.net_qty_g,
+            'spice': history_res[0].spice_name if history_res else 'N/A',
+            'history': rows_to_dicts(history_res)
+        }
+        
+        return jsonify(response)
+    except Exception as e:
+        return jsonify({'message': 'An error occurred during verification', 'error': str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
