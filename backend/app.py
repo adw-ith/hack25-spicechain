@@ -5,8 +5,10 @@ from datetime import datetime
 import uuid
 import json
 from functools import wraps
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app, supports_credentials=True, origins=["http://localhost:3000"])
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///spicechain.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -245,11 +247,11 @@ def signup():
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
-    
+    print("Login Data Received:", data)
     if not data.get('username') or not data.get('password'):
         return jsonify({'error': 'Username and password are required'}), 400
     
-    user = User.query.filter_by(username=data['username']).first()
+    user = User.query.filter_by(email=data['username']).first()
     
     if user and check_password_hash(user.password_hash, data['password']) and user.is_active:
         session['user_id'] = user.id

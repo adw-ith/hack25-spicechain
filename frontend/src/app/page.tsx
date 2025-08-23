@@ -76,7 +76,7 @@ export default function Home() {
           </p>
 
           {/* Navigation Buttons */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-4xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-4xl mx-auto">
             <Link
               href="/farmer"
               className="block bg-orange-500 hover:bg-orange-600 text-white font-bold py-5 px-6 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 text-lg"
@@ -87,21 +87,21 @@ export default function Home() {
               href="/middleman"
               className="block bg-orange-500 hover:bg-orange-600 text-white font-bold py-5 px-6 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 text-lg"
             >
-              I am a Middleman
+              I am a Distributer
             </Link>
             <Link
               href="/consumer"
               className="block bg-orange-500 hover:bg-orange-600 text-white font-bold py-5 px-6 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 text-lg"
             >
-              I am a Consumer
+              I am a Business
             </Link>
-            <a
+            {/* <a
               href="/trace"
               onClick={openModal}
               className="block bg-slate-800/80 border-2 border-orange-500 text-orange-400 hover:bg-orange-500 hover:text-white font-bold py-5 px-6 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 backdrop-blur-sm text-lg cursor-pointer"
             >
               Find a Batch
-            </a>
+            </a> */}
           </div>
         </div>
       </main>
