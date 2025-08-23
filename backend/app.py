@@ -626,10 +626,15 @@ def get_my_batches():
     batches_list = []
     
     for batch in batches:
+        spice_name  = Spices.query.filter_by(id=batch.spice_id).first()
+        if spice_name is None:
+            spice_display_name = f"Unknown Spice (ID: {batch.spice_id})"
+        else:
+            spice_display_name = spice_name.name
         batches_list.append({
             'id': batch.id,
             'batch_id': batch.batch_id,
-            'spice_name': batch.spice.name,
+            'spice_name': spice_display_name,
             'quantity_kg': batch.quantity_kg,
             'harvest_date': batch.harvest_date.isoformat(),
             'status': batch.status,
@@ -645,10 +650,15 @@ def get_my_packages():
     packages_list = []
     
     for package in packages:
+        spice_name  = Spices.query.filter_by(id=package.spice_id).first()
+        if spice_name is None:
+            spice_display_name = f"Unknown Spice (ID: {package.spice_id})"
+        else:
+            spice_display_name = spice_name.name
         packages_list.append({
             'id': package.id,
             'package_id': package.package_id,
-            'spice_name': package.batch.spice.name,
+            'spice_name': spice_display_name,
             'quantity_kg': package.quantity_kg,
             'package_type': package.package_type,
             'status': package.status,
@@ -1190,10 +1200,15 @@ def get_available_batches():
     batches_list = []
     
     for batch in available_batches:
+        spice_name  = Spices.query.filter_by(id=batch.spice_id).first()
+        if spice_name is None:
+            spice_display_name = f"Unknown Spice (ID: {batch.spice_id})"
+        else:
+            spice_display_name = spice_name.name
         batch_data = {
             'id': batch.id,
             'batch_id': batch.batch_id,
-            'spice_name': batch.spice.name,
+            'spice_name': spice_display_name,
             'quantity_kg': batch.quantity_kg,
             'harvest_date': batch.harvest_date.isoformat(),
             'status': batch.status,
