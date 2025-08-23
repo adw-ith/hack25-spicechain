@@ -233,11 +233,11 @@ def signup():
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
-    
+    print("Login Data Received:", data)
     if not data.get('username') or not data.get('password'):
         return jsonify({'error': 'Username and password are required'}), 400
     
-    user = User.query.filter_by(username=data['username']).first()
+    user = User.query.filter_by(email=data['username']).first()
     
     if user and check_password_hash(user.password_hash, data['password']) and user.is_active:
         session['user_id'] = user.id

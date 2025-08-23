@@ -39,16 +39,16 @@ export default function LoginPage() {
       const endpoint = activeTab === "login" ? "/login" : "/signup";
       
       const requestBody = activeTab === "login"
-        ? { email, password }
+        ? { username: email, password }
         : { 
-            name, 
+            username : name, 
             email, 
             password,
             user_type: isProducer ? "producer" : "consumer", // Determine user type
             location: location,
           };
-
-      const res = await fetch(`http://127.0.0.1:5000${endpoint}`, {
+      console.log("Request Body:", requestBody);
+      const res = await fetch(`http://127.0.0.1:5000/api${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
