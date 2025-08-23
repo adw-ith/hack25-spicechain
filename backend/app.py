@@ -19,6 +19,7 @@ class User(db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
+    coordinate = db.Column(db.String(100))  # For location tracking
     user_type = db.Column(db.String(20), nullable=False)  # farmer, middleman, consumer, quality_officer
     phone = db.Column(db.String(15))
     address = db.Column(db.Text)
@@ -212,7 +213,8 @@ def signup():
         user_type=data['user_type'],
         phone=data.get('phone'),
         address=data.get('address'),
-        license_number=data.get('license_number')
+        license_number=data.get('license_number'),
+        coordinate=data.get('coordinate')
     )
     
     db.session.add(user)
