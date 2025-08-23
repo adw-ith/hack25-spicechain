@@ -5,8 +5,10 @@ from datetime import datetime
 import uuid
 import json
 from functools import wraps
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///spicechain.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
