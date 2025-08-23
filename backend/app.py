@@ -4,6 +4,8 @@ import datetime
 from functools import wraps
 from uuid import UUID
 from flask_cors import CORS
+from flask_migrate import Migrate
+
 
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
@@ -16,17 +18,14 @@ import jwt
 app = Flask(__name__)
 CORS(app)
 
-# REQUIRED ENV VARS:
-#   SECRET_KEY
-#   DATABASE_URL (Supabase "Connection string" > URI)
+
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "change-me-in-prod")
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
-    "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/postgres"
-)
+    "DATABASE_URL")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 
 # ---------------------------------------
 # Local Auth Table (separate from participants)
