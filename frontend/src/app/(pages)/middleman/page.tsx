@@ -84,7 +84,7 @@ export default function MiddlemanPage() {
       setLoading(true);
       await Promise.all([
         fetchMyBatches(),
-        fetchAvailableBatches(),
+        // fetchAvailableBatches(),
         fetchPendingTransactions(),
         fetchMyPackages(),
       ]);
@@ -98,7 +98,8 @@ export default function MiddlemanPage() {
 
   const fetchMyBatches = async () => {
     try {
-      const response = await fetch(`${API_BASE}/mybatches`, {
+      const response = await fetch("http://127.0.0.1:5000/api/mybatches", {
+        method: "GET",
         credentials: "include",
       });
       const data = await response.json();
@@ -112,29 +113,32 @@ export default function MiddlemanPage() {
     }
   };
 
-  const fetchAvailableBatches = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/search?type=batch&q=`, {
-        credentials: "include",
-      });
-      const data = await response.json();
-      if (response.ok) {
-        // Filter out batches already owned by current user
-        const filtered =
-          data.batches?.filter(
-            (batch: any) =>
-              !myBatches.some((mb) => mb.batch_id === batch.batch_id)
-          ) || [];
-        setAvailableBatches(filtered);
-      }
-    } catch (err) {
-      console.error("Error fetching available batches:", err);
-    }
-  };
+  // const fetchAvailableBatches = async () => {
+  //   try {
+  //     const response = await fetch(
+  //       `http://127.0.0.1:5000/api/search?type=batch&q=`,
+  //       {
+  //         credentials: "include",
+  //       }
+  //     );
+  //     const data = await response.json();
+  //     if (response.ok) {
+  //       // Filter out batches already owned by current user
+  //       const filtered =
+  //         data.batches?.filter(
+  //           (batch: any) =>
+  //             !myBatches.some((mb) => mb.batch_id === batch.batch_id)
+  //         ) || [];
+  //       setAvailableBatches(filtered);
+  //     }
+  //   } catch (err) {
+  //     console.error("Error fetching available batches:", err);
+  //   }
+  // };
 
   const fetchPendingTransactions = async () => {
     try {
-      const response = await fetch(`${API_BASE}/transactions`, {
+      const response = await fetch(`http://127.0.0.1:5000/api/transactions`, {
         credentials: "include",
       });
       const data = await response.json();
@@ -153,7 +157,7 @@ export default function MiddlemanPage() {
 
   const fetchMyPackages = async () => {
     try {
-      const response = await fetch(`${API_BASE}/mypackages`, {
+      const response = await fetch(`http://127.0.0.1:5000/api/mypackages`, {
         credentials: "include",
       });
       const data = await response.json();
@@ -267,7 +271,7 @@ export default function MiddlemanPage() {
         alert(`Purchase initiated! Transaction ID: ${data.transaction_id}`);
         setIsBuyModalOpen(false);
         setBuyForm({ price_per_kg: "", notes: "" });
-        fetchAvailableBatches();
+        // fetchAvailableBatches();
       } else {
         alert(data.error || "Failed to initiate purchase");
       }
@@ -284,7 +288,7 @@ export default function MiddlemanPage() {
     try {
       if (decision === "accept") {
         const response = await fetch(
-          `${API_BASE}/transaction/${transactionId}/complete`,
+          `http://127.0.0.1:5000/api/transaction/${transactionId}/complete`,
           {
             method: "POST",
             credentials: "include",
@@ -466,7 +470,7 @@ export default function MiddlemanPage() {
         </div>
 
         {/* Available Batches to Buy */}
-        <div className="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700">
+        {/* <div className="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700">
           <h2 className="text-xl font-bold mb-4">Available Batches to Buy</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {availableBatches.map((batch) => (
@@ -496,7 +500,7 @@ export default function MiddlemanPage() {
               </div>
             ))}
           </div>
-        </div>
+        </div> */}
 
         {/* My Packages Section */}
         <div className="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700">
