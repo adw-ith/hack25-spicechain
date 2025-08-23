@@ -1,0 +1,229 @@
+Of course. Here is the API documentation for the SpiceChain backend, detailing each route, its purpose, and how to use it.
+
+## SpiceChain API Documentation
+
+This document provides a guide to all the available API endpoints for the SpiceChain platform.
+
+**Base URL**: `http://127.0.0.1:5001`
+**Authentication**: Protected routes require a JSON Web Token (JWT) to be passed in the request header as `x-access-token`.
+
+-----
+
+### **Authentication**
+
+These routes handle user registration and login.
+
+#### **1. Register a New Participant**
+
+Creates a new user account (e.g., Farmer, Processor).
+
+  * **Endpoint**: `POST /auth/register`
+  * **Authentication**: None
+  * **Request Body**:
+    ```json
+    {
+      "name": "Kerala Spice Farms",
+      "email": "farmer@example.com",
+      "password": "strongpassword123",
+      "role": "Farmer"
+    }
+    ```
+  * **Success Response (201 Created)**:
+    ```json
+    {
+      "message": "New participant registered!"
+    }
+    ```
+  * **Error Responses**:
+      * `400 Bad Request`: Missing required fields.
+      * `409 Conflict`: Email already exists.
+
+#### **2. Login**
+
+Authenticates a user and returns a JWT for accessing protected routes.
+
+  * **Endpoint**: `POST /auth/login`
+  * **Authentication**: None
+  * **Request Body**:
+    ```json
+    {
+      "email": "farmer@example.com",
+      "password": "strongpassword123"
+    }
+    ```
+  * **Success Response (200 OK)**:
+    ```json
+    {
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    }
+    ```
+  * **Error Responses**:
+      * `401 Unauthorized`: Invalid email or password.
+
+-----
+
+### **Batch & Transaction Management**
+
+These routes are for creating and managing spice batches throughout the supply chain.
+
+#### **1. Create an Origin Batch**
+
+Creates a new batch of raw spices. This action is restricted to users with the **'Farmer'** role.
+
+  * **Endpoint**: `POST /batches`
+  * **Authentication**: Required (Farmer role)
+  * **Request Body**:
+    ```json
+    {
+      "spice_id": 1,
+      "quantity_g": 50000,
+      "harvest_date": "2025-09-15"
+    }
+    ```
+  * **Success Response (201 Created)**:
+    ```json
+    {
+      "message": "Batch created successfully",
+      "batch_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef"
+    }
+    ```
+  * **Error Responses**:
+      * `403 Forbidden`: User is not a 'Farmer'.
+
+#### **2. Transfer a Batch**
+
+Transfers a specific quantity of a batch from the current owner to another participant. This creates a *new batch* for the recipient, linked to the original.
+
+  * **Endpoint**: `POST /batches/transfer`
+  * **Authentication**: Required (Batch Owner)
+  * **Request Body**:
+    ```json
+    {
+      "batch_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+      "to_participant_id": 2,
+      "quantity_g": 10000,
+      "price_per_kg": 15.50
+    }
+    ```
+  * **Success Response (201 Created)**:
+    ```json
+    {
+      "message": "Transfer recorded successfully."
+    }
+    ```
+  * **Error Responses**:
+      * `400 Bad Request`: Insufficient quantity available.
+      * `404 Not Found`: Batch not found or you are not the owner.
+
+#### **3. Split a Batch**
+
+Splits a single source batch into multiple smaller child batches, all owned by the current user.
+
+  * **Endpoint**: `POST /batches/split`
+  * **Authentication**: Required (Batch Owner)
+  * **Request Body**:
+    ```json
+    {
+      "source_batch_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+      "child_batches": [
+        { "quantity_g": 4000 },
+        { "quantity_g": 6000 }
+      ]
+    }
+    ```
+  * **Success Response (201 Created)**:
+    ```json
+    {
+      "message": "Batch split successfully."
+    }
+    ```
+  * **Error Responses**:
+      * `400 Bad Request`: Total split quantity exceeds available stock.
+      * `404 Not Found`: Source batch not found or you are not the owner.
+
+-----
+
+### **Packaging**
+
+This route is for creating the final consumer-ready product.
+
+#### **1. Create a Package**
+
+Creates a packaged product from one or more source batches. The stock from the source batch(es) is automatically deducted.
+
+  * **Endpoint**: `POST /packages`
+  * **Authentication**: Required
+  * **Request Body**:
+    ```json
+    {
+      "label_code": "PEPPER-KG-082025-001",
+      "net_qty_g": 150,
+      "contents": [
+        { "batch_id": "b2c3d4e5-f6a7-8901-2345-67890abcdef1", "qty_g_from_batch": 100 },
+        { "batch_id": "c3d4e5f6-a7b8-9012-3456-7890abcdef12", "qty_g_from_batch": 50 }
+      ]
+    }
+    ```
+  * **Success Response (201 Created)**:
+    ```json
+    {
+      "message": "Package created successfully",
+      "package_id": "d4e5f6a7-b8c9-0123-4567-890abcdef123"
+    }
+    ```
+  * **Error Responses**:
+      * `404 Not Found`: A source batch does not exist.
+      * `409 Conflict`: The `label_code` is already in use.
+
+-----
+
+### **Public Verification**
+
+This public route is the core of the traceability feature, allowing anyone to verify a product's history.
+
+#### **1. Verify Package History**
+
+Retrieves the complete farm-to-consumer history of a product using its unique label code.
+
+  * **Endpoint**: `GET /verify/<label_code>`
+  * **Authentication**: None
+  * **URL Parameter**:
+      * `label_code`: The unique identifier printed on the package (e.g., `PEPPER-KG-082025-001`).
+  * **Success Response (200 OK)**:
+    ```json
+    {
+      "label_code": "PEPPER-KG-082025-001",
+      "packaged_at": "2025-08-23T10:30:00Z",
+      "packager": "Spices Inc.",
+      "net_quantity_g": 150.0,
+      "spice": "Black Pepper",
+      "history": [
+        {
+          "event_time": "2025-08-20T08:00:00Z",
+          "event_type": "BATCH_CREATED",
+          "actor_name": "Kerala Spice Farms",
+          "actor_role": "Farmer",
+          "details": {"initial_qty_g": 50000, "harvest_date": "2025-08-20"},
+          "batch_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+          ...
+        },
+        {
+          "event_time": "2025-08-22T14:00:00Z",
+          "event_type": "TRANSFER",
+          "actor_name": "Kerala Spice Farms",
+          "actor_role": "Farmer",
+          ...
+        },
+        {
+          "event_time": "2025-08-23T10:30:00Z",
+          "event_type": "PACKAGE_CREATED",
+          "actor_name": "Spices Inc.",
+          "actor_role": "Processor",
+          ...
+        }
+      ]
+    }
+    ```
+  * **Error Responses**:
+      * `404 Not Found`: No package with the specified `label_code` exists.
+      * `500 Internal Server Error`: An error occurred during verification.
