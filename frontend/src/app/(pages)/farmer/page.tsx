@@ -97,11 +97,54 @@ export default function FarmerPage() {
     setNewTransactionItems(items);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Submitting Transactions:", newTransactionItems);
-    alert("Transaction submitted! Check the console for data.");
+
+    try {
+      const response = await fetch("http://127.0.0.1:5000/api/registerbatch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          spice_id: newTransactionItems[0].sourceBatchId, // mapping from your form
+          quantity_kg: Number(newTransactionItems[0].quantity) / 1000, // convert g -> kg
+          harvest_date: new Date().toISOString(), // for now using current time
+          farm_location: "Default Farm", // you can replace with a real input
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        alert(`Error: ${data.error || "Something went wrong"}`);
+        return;
+      }
+
+      alert(`Batch registered successfully! Batch ID: ${data.batch_id}`);
+
+      // Optionally update local state so UI shows new batch immediately
+      setBatches([
+        ...batches,
+        {
+          id: data.batch_id,
+          spice:
+            spices.find(
+              (s) => s.id === Number(newTransactionItems[0].sourceBatchId)
+            )?.name || "Unknown",
+          origin: "Default Farm",
+          owner: currentUser.name,
+          harvest_date: new Date().toISOString().split("T")[0],
+          status: "In Stock",
+          qty: `${newTransactionItems[0].quantity}g`,
+        },
+      ]);
+    } catch (error) {
+      console.error("Error submitting transaction:", error);
+      alert("Failed to submit transaction.");
+    }
   };
+
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6 overflow-y-auto">
