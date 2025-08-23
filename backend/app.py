@@ -3,6 +3,7 @@ import json
 import datetime
 from functools import wraps
 from uuid import UUID
+from flask_cors import CORS
 
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
@@ -13,6 +14,7 @@ import jwt
 # Flask & Database Config
 # ---------------------------------------
 app = Flask(__name__)
+CORS(app)
 
 # REQUIRED ENV VARS:
 #   SECRET_KEY
