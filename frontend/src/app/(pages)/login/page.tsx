@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export default function LoginPage() {
@@ -14,6 +15,8 @@ export default function LoginPage() {
   );
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  const router = useRouter();
 
   const handleGetLocation = () => {
     if ("geolocation" in navigator) {
@@ -72,6 +75,7 @@ export default function LoginPage() {
       if (activeTab === "login") {
         localStorage.setItem("token", data.token);
         alert("Login successful!");
+        router.push(`/${data.user_type}`);
       } else {
         alert("Signup successful! Please login.");
         setActiveTab("login");

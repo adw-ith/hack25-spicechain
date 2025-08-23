@@ -14,6 +14,7 @@ interface Batch {
   is_division: boolean;
   parent_batch_id?: string;
   division_info?: string;
+  harvest_image?: string;
 }
 
 interface DashboardData {
@@ -74,6 +75,8 @@ export default function FarmerPage() {
     farming_method: "conventional",
     estimated_grade: "B",
   });
+  const [harvestImage, setHarvestImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [saleItems, setSaleItems] = useState<SaleItem[]>([
     { batchId: "", buyerId: "", pricePerKg: "" },
   ]);
@@ -180,25 +183,64 @@ export default function FarmerPage() {
     loadData();
   }, []);
 
+  // Image handling
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setHarvestImage(file);
+
+      // Create preview
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setImagePreview(e.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeImage = () => {
+    setHarvestImage(null);
+    setImagePreview(null);
+    // Reset the file input
+    const fileInput = document.getElementById(
+      "harvest_image"
+    ) as HTMLInputElement;
+    if (fileInput) {
+      fileInput.value = "";
+    }
+  };
+
   // Form handlers
   const handleRegisterBatch = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log("Registering batch:", newBatch);
+
     try {
+      // Create FormData for file upload
+      const formData = new FormData();
+      formData.append("spice_id", newBatch.spice_id);
+      formData.append("quantity_kg", newBatch.quantity_kg);
+      formData.append("farm_location", newBatch.farm_location);
+      formData.append("farming_method", newBatch.farming_method);
+      formData.append("estimated_grade", newBatch.estimated_grade);
+      formData.append("harvest_date", new Date().toISOString());
+
+      // Add image if selected
+      if (harvestImage) {
+        formData.append("harvest_image", harvestImage);
+      }
+
       const response = await fetch("http://127.0.0.1:5000/api/registerbatch", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...newBatch,
-          spice_id: Number(newBatch.spice_id),
-          quantity_kg: Number(newBatch.quantity_kg),
-          harvest_date: new Date().toISOString(),
-        }),
+        body: formData, // Send FormData instead of JSON
         credentials: "include",
       });
 
       if (response.ok) {
         const data = await response.json();
         alert(`Batch registered successfully! Batch ID: ${data.batch_id}`);
+
+        // Reset form
         setNewBatch({
           spice_id: "",
           quantity_kg: "",
@@ -206,6 +248,8 @@ export default function FarmerPage() {
           farming_method: "conventional",
           estimated_grade: "B",
         });
+        removeImage();
+
         await Promise.all([
           fetchBatches(),
           fetchAllBatches(),
@@ -296,6 +340,22 @@ export default function FarmerPage() {
     return colors[status as keyof typeof colors] || "bg-gray-600";
   };
 
+  const logout = async () => {
+    try {
+      const response = await fetch("http://localhost:5000/api/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (response.ok) {
+        // localStorage.removeItem("token");
+        alert("Logged out successfully");
+        window.location.href = "/login"; // Redirect to login page
+      }
+    } catch (error) {
+      alert("Logout failed");
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 text-white p-6 flex items-center justify-center">
@@ -307,7 +367,10 @@ export default function FarmerPage() {
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8">Farmer Dashboard</h1>
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold">Farmer Dashboard</h1>
+          <button className=" bg-red-700 px-4 py-2 rounded cursor-pointer" onClick={() => logout()}>Logout</button>
+        </div>
 
         {/* Dashboard Summary */}
         {dashboardData && (
@@ -383,6 +446,7 @@ export default function FarmerPage() {
                       <th className="p-3">Status</th>
                       <th className="p-3">Grade</th>
                       <th className="p-3">Type</th>
+                      <th className="p-3">Image</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -426,6 +490,25 @@ export default function FarmerPage() {
                           ) : (
                             <span className="text-green-400 text-xs">
                               Original
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          {batch.harvest_image ? (
+                            <img
+                              src={`http://127.0.0.1:5000${batch.harvest_image}`}
+                              alt="Harvest"
+                              className="w-12 h-12 object-cover rounded-lg cursor-pointer hover:scale-110 transition-transform"
+                              onClick={() =>
+                                window.open(
+                                  `http://127.0.0.1:5000${batch.harvest_image}`,
+                                  "_blank"
+                                )
+                              }
+                            />
+                          ) : (
+                            <span className="text-gray-500 text-xs">
+                              No image
                             </span>
                           )}
                         </td>
@@ -545,6 +628,43 @@ export default function FarmerPage() {
                       <option value="B">Grade B</option>
                       <option value="C">Grade C</option>
                     </select>
+                  </div>
+                </div>
+
+                {/* Harvest Image Upload */}
+                <div>
+                  <label className="block mb-2 text-sm font-medium">
+                    Harvest Image (Optional)
+                  </label>
+                  <div className="space-y-4">
+                    <input
+                      type="file"
+                      id="harvest_image"
+                      accept="image/*"
+                      onChange={handleImageChange}
+                      className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-orange-500 file:text-white file:cursor-pointer hover:file:bg-orange-600"
+                    />
+
+                    {imagePreview && (
+                      <div className="relative">
+                        <img
+                          src={imagePreview}
+                          alt="Preview"
+                          className="w-40 h-40 object-cover rounded-lg border border-slate-600"
+                        />
+                        <button
+                          type="button"
+                          onClick={removeImage}
+                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm hover:bg-red-600"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    )}
+
+                    <p className="text-xs text-gray-400">
+                      Supported formats: JPG, PNG, GIF (max 5MB)
+                    </p>
                   </div>
                 </div>
 

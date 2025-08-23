@@ -270,6 +270,7 @@ def login():
 @app.route('/api/logout', methods=['POST'])
 @login_required
 def logout():
+    print("Logging out")
     user_id = session['user_id']
     log_action(user_id, 'USER_LOGOUT', 'user', str(user_id))
     session.clear()
@@ -283,6 +284,7 @@ def register_batch():
     
     # Parse form fields
     data = request.form
+    print("Batch Registration Data:", data)
     required_fields = ['spice_id', 'quantity_kg', 'harvest_date', 'farm_location']
     for field in required_fields:
         if field not in data:
@@ -648,6 +650,7 @@ def get_spices():
 @app.route('/api/mybatches', methods=['GET'])
 @login_required
 def get_my_batches():
+    print("Fetching batches for user:", session['user_id'])
     batches = Batches.query.filter_by(current_owner_id=session['user_id']).all()
     batches_list = []
     

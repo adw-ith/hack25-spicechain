@@ -1,176 +1,383 @@
-// app/middleman/page.tsx
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 type Batch = {
-  id: string;
-  spice: string;
-  origin: string;
-  owner: string;
+  id: number;
+  batch_id: string;
+  spice_name: string;
+  quantity_kg: number;
   harvest_date: string;
   status: string;
-  qty: string;
-  subBatches?: SubBatch[];
+  estimated_grade: string;
+  farmer?: string;
+  price_per_kg?: number;
+  is_division?: boolean;
+  parent_batch_id?: string;
 };
 
-type SubBatch = {
-  id: string;
-  qty: string;
-  to: string;
-  date: string;
+type Transaction = {
+  transaction_id: string;
+  from_user: string;
+  to_user: string;
+  quantity_kg: number;
+  total_amount: number;
+  transaction_type: string;
+  payment_status: string;
+  transaction_date: string;
+  direction: string;
+  item_type: string;
+  item_id: string;
+  spice_name: string;
+};
+
+type Package = {
+  id: number;
+  package_id: string;
+  spice_name: string;
+  quantity_kg: number;
+  package_type: string;
+  status: string;
+  package_date: string;
 };
 
 export default function MiddlemanPage() {
-  const currentUser = { id: "MID001", name: "Middleman X" };
+  const [myBatches, setMyBatches] = useState<Batch[]>([]);
+  const [availableBatches, setAvailableBatches] = useState<Batch[]>([]);
+  const [pendingTransactions, setPendingTransactions] = useState<Transaction[]>(
+    []
+  );
+  const [myPackages, setMyPackages] = useState<Package[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>("");
 
-  // Dummy batches sent to this middleman (pending verification)
-  const [pendingBatches, setPendingBatches] = useState([
-    {
-      id: "BATCH004",
-      spice: "Black Pepper",
-      origin: "Kerala",
-      from: "Farmer A",
-      qty: "30kg",
-      status: "Verify Pending",
-    },
-    {
-      id: "BATCH005",
-      spice: "Cardamom",
-      origin: "Tamil Nadu",
-      from: "Farmer B",
-      qty: "15kg",
-      status: "Verify Pending",
-    },
-  ]);
-
-  // Dummy batch list already owned by middleman
-  const [myBatches, setMyBatches] = useState<Batch[]>([
-    {
-      id: "BATCH001",
-      spice: "Black Pepper",
-      origin: "Kerala",
-      owner: "Middleman X",
-      harvest_date: "2025-08-10",
-      status: "In Transit",
-      qty: "50kg",
-      subBatches: [],
-    },
-    {
-      id: "BATCH006",
-      spice: "Turmeric",
-      origin: "Andhra Pradesh",
-      owner: "Middleman X",
-      harvest_date: "2025-08-15",
-      status: "With Middleman",
-      qty: "70kg",
-      subBatches: [],
-    },
-  ]);
-
-  // Modal state
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  // Modal states
+  const [isSellModalOpen, setIsSellModalOpen] = useState(false);
+  const [isPackageModalOpen, setIsPackageModalOpen] = useState(false);
+  const [isBuyModalOpen, setIsBuyModalOpen] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
-  const [sendQty, setSendQty] = useState("");
-  const [sendTo, setSendTo] = useState("");
 
-  // Handle accept/reject
-  const handleDecision = (id: string, decision: "accept" | "reject") => {
-    const batch = pendingBatches.find((b) => b.id === id);
-    if (!batch) return;
+  // Form states
+  const [sellForm, setSellForm] = useState({
+    buyer_id: "",
+    price_per_kg: "",
+    notes: "",
+  });
+  const [packageForm, setPackageForm] = useState({
+    quantity_kg: "",
+    package_type: "retail",
+  });
+  const [buyForm, setBuyForm] = useState({
+    price_per_kg: "",
+    notes: "",
+  });
 
-    if (decision === "accept") {
-      setMyBatches((prev) => [
-        ...prev,
-        {
-          ...batch,
-          owner: currentUser.name,
-          harvest_date: new Date().toISOString().split("T")[0],
-          status: "With Middleman",
-          subBatches: [],
-        },
+  // API base URL
+  const API_BASE = "http://localhost:5000/api";
+
+  // Fetch data on component mount
+  useEffect(() => {
+    fetchAllData();
+  }, []);
+
+  const fetchAllData = async () => {
+    try {
+      setLoading(true);
+      await Promise.all([
+        fetchMyBatches(),
+        fetchAvailableBatches(),
+        fetchPendingTransactions(),
+        fetchMyPackages(),
       ]);
+    } catch (err) {
+      setError("Failed to load data");
+      console.error(err);
+    } finally {
+      setLoading(false);
     }
-    setPendingBatches((prev) => prev.filter((b) => b.id !== id));
   };
 
-  // Open send modal
-  const openSendModal = (batch: Batch) => {
-    setSelectedBatch(batch);
-    setSendQty("");
-    setSendTo("");
-    setIsModalOpen(true);
+  const fetchMyBatches = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/mybatches`, {
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setMyBatches(data.batches);
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (err) {
+      console.error("Error fetching my batches:", err);
+    }
   };
 
-  // Handle sending subbatch
-  const handleSendForward = () => {
-    if (!selectedBatch || !sendQty || !sendTo) return;
+  const fetchAvailableBatches = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/search?type=batch&q=`, {
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (response.ok) {
+        // Filter out batches already owned by current user
+        const filtered =
+          data.batches?.filter(
+            (batch: any) =>
+              !myBatches.some((mb) => mb.batch_id === batch.batch_id)
+          ) || [];
+        setAvailableBatches(filtered);
+      }
+    } catch (err) {
+      console.error("Error fetching available batches:", err);
+    }
+  };
 
-    const qtyNum = parseFloat(sendQty);
-    const currentQty = parseFloat(selectedBatch.qty.replace("kg", ""));
+  const fetchPendingTransactions = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/transactions`, {
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (response.ok) {
+        // Filter for pending received transactions
+        const pending = data.transactions.filter(
+          (txn: Transaction) =>
+            txn.direction === "received" && txn.payment_status === "pending"
+        );
+        setPendingTransactions(pending);
+      }
+    } catch (err) {
+      console.error("Error fetching transactions:", err);
+    }
+  };
 
-    if (qtyNum > currentQty) {
-      alert("Quantity exceeds available stock");
+  const fetchMyPackages = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/mypackages`, {
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setMyPackages(data.packages);
+      }
+    } catch (err) {
+      console.error("Error fetching packages:", err);
+    }
+  };
+
+  const handleSellBatch = async () => {
+    if (!selectedBatch || !sellForm.buyer_id || !sellForm.price_per_kg) {
+      alert("Please fill all required fields");
       return;
     }
 
-    const newSub: SubBatch = {
-      id: `${selectedBatch.id}-SUB${
-        (selectedBatch.subBatches?.length || 0) + 1
-      }`,
-      qty: qtyNum + "kg",
-      to: sendTo,
-      date: new Date().toISOString().split("T")[0],
-    };
+    try {
+      const response = await fetch(
+        `${API_BASE}/batch/${selectedBatch.id}/sell`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            buyer_id: parseInt(sellForm.buyer_id),
+            price_per_kg: parseFloat(sellForm.price_per_kg),
+            notes: sellForm.notes,
+          }),
+        }
+      );
 
-    setMyBatches((prev) =>
-      prev.map((b) =>
-        b.id === selectedBatch.id
-          ? {
-              ...b,
-              qty: currentQty - qtyNum + "kg", // ✅ update remaining qty
-              subBatches: [...(b.subBatches || []), newSub],
-            }
-          : b
-      )
-    );
-
-    setIsModalOpen(false);
+      const data = await response.json();
+      if (response.ok) {
+        alert(`Sale initiated! Transaction ID: ${data.transaction_id}`);
+        setIsSellModalOpen(false);
+        setSellForm({ buyer_id: "", price_per_kg: "", notes: "" });
+        fetchMyBatches(); // Refresh data
+      } else {
+        alert(data.error || "Failed to initiate sale");
+      }
+    } catch (err) {
+      alert("Error initiating sale");
+      console.error(err);
+    }
   };
+
+  const handleCreatePackage = async () => {
+    if (!selectedBatch || !packageForm.quantity_kg) {
+      alert("Please fill all required fields");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/package`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          batch_id: selectedBatch.id,
+          quantity_kg: parseFloat(packageForm.quantity_kg),
+          package_type: packageForm.package_type,
+        }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert(`Package created! ID: ${data.package_id}`);
+        setIsPackageModalOpen(false);
+        setPackageForm({ quantity_kg: "", package_type: "retail" });
+        fetchMyBatches();
+        fetchMyPackages();
+      } else {
+        alert(data.error || "Failed to create package");
+      }
+    } catch (err) {
+      alert("Error creating package");
+      console.error(err);
+    }
+  };
+
+  const handleBuyBatch = async () => {
+    if (!selectedBatch || !buyForm.price_per_kg) {
+      alert("Please fill all required fields");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/transaction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          to_user_id: selectedBatch.id, // This should be the current user's ID
+          batch_id: selectedBatch.id,
+          quantity_kg: selectedBatch.quantity_kg,
+          price_per_kg: parseFloat(buyForm.price_per_kg),
+          transaction_type: "sale",
+          notes: buyForm.notes,
+        }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert(`Purchase initiated! Transaction ID: ${data.transaction_id}`);
+        setIsBuyModalOpen(false);
+        setBuyForm({ price_per_kg: "", notes: "" });
+        fetchAvailableBatches();
+      } else {
+        alert(data.error || "Failed to initiate purchase");
+      }
+    } catch (err) {
+      alert("Error initiating purchase");
+      console.error(err);
+    }
+  };
+
+  const handleTransactionDecision = async (
+    transactionId: string,
+    decision: "accept" | "reject"
+  ) => {
+    try {
+      if (decision === "accept") {
+        const response = await fetch(
+          `${API_BASE}/transaction/${transactionId}/complete`,
+          {
+            method: "POST",
+            credentials: "include",
+          }
+        );
+
+        const data = await response.json();
+        if (response.ok) {
+          alert("Transaction completed successfully!");
+          fetchAllData(); // Refresh all data
+        } else {
+          alert(data.error || "Failed to complete transaction");
+        }
+      } else {
+        // For rejection, we'd need a separate API endpoint
+        alert("Transaction rejected");
+        setPendingTransactions((prev) =>
+          prev.filter((txn) => txn.transaction_id !== transactionId)
+        );
+      }
+    } catch (err) {
+      alert("Error processing transaction");
+      console.error(err);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+        <div className="text-xl">Loading...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+        <div className="text-xl text-red-400">{error}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6 overflow-y-auto">
-      <div className="max-w-6xl mx-auto flex flex-col gap-8">
-        {/* Notifications Section */}
+      <div className="max-w-7xl mx-auto space-y-8">
+        {/* Header */}
+        <div className="text-center">
+          <h1 className="text-3xl font-bold text-white mb-2">
+            Middleman Dashboard
+          </h1>
+          <p className="text-slate-400">
+            Manage your spice inventory and transactions
+          </p>
+        </div>
+
+        {/* Pending Transactions Section */}
         <div className="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700">
           <h2 className="text-xl font-bold mb-4">
-            Pending Batches for Verification
+            Pending Transactions for Verification
           </h2>
-          {pendingBatches.length === 0 ? (
-            <p className="text-slate-400 text-sm">No pending batches.</p>
+          {pendingTransactions.length === 0 ? (
+            <p className="text-slate-400 text-sm">No pending transactions.</p>
           ) : (
             <div className="space-y-4">
-              {pendingBatches.map((batch) => (
+              {pendingTransactions.map((txn) => (
                 <div
-                  key={batch.id}
+                  key={txn.transaction_id}
                   className="bg-slate-700 p-4 rounded-xl flex justify-between items-center"
                 >
                   <div>
                     <p className="font-semibold">
-                      {batch.spice} ({batch.qty})
+                      {txn.spice_name} ({txn.quantity_kg}kg)
                     </p>
                     <p className="text-sm text-slate-400">
-                      From: {batch.from} | Origin: {batch.origin}
+                      From: {txn.from_user} | Amount: ₹{txn.total_amount}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {txn.item_type}: {txn.item_id}
                     </p>
                   </div>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => handleDecision(batch.id, "accept")}
+                      onClick={() =>
+                        handleTransactionDecision(txn.transaction_id, "accept")
+                      }
                       className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm"
                     >
                       Accept
                     </button>
                     <button
-                      onClick={() => handleDecision(batch.id, "reject")}
+                      onClick={() =>
+                        handleTransactionDecision(txn.transaction_id, "reject")
+                      }
                       className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm"
                     >
                       Reject
@@ -191,135 +398,335 @@ export default function MiddlemanPage() {
                 <tr className="bg-slate-700 text-sm">
                   <th className="p-2">Batch ID</th>
                   <th className="p-2">Spice</th>
-                  <th className="p-2">Origin</th>
-                  <th className="p-2">Owner</th>
+                  <th className="p-2">Quantity (kg)</th>
+                  <th className="p-2">Grade</th>
                   <th className="p-2">Harvest Date</th>
                   <th className="p-2">Status</th>
-                  <th className="p-2">Qty</th>
-                  <th className="p-2">Action</th>
+                  <th className="p-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {myBatches.map((b) => (
-                  <>
-                    <tr
-                      key={b.id}
-                      className="border-b border-slate-700 text-sm"
-                    >
-                      <td className="p-2">{b.id}</td>
-                      <td className="p-2">{b.spice}</td>
-                      <td className="p-2">{b.origin}</td>
-                      <td className="p-2">{b.owner}</td>
-                      <td className="p-2">{b.harvest_date}</td>
-                      <td className="p-2">
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs ${
-                            b.status === "Delivered"
-                              ? "bg-green-600"
-                              : b.status === "In Transit"
-                              ? "bg-yellow-600"
-                              : "bg-blue-600"
-                          }`}
-                        >
-                          {b.status}
-                        </span>
-                      </td>
-                      <td className="p-2">{b.qty}</td>
-                      <td className="p-2">
+                {myBatches.map((batch) => (
+                  <tr
+                    key={batch.id}
+                    className="border-b border-slate-700 text-sm"
+                  >
+                    <td className="p-2">{batch.batch_id}</td>
+                    <td className="p-2">{batch.spice_name}</td>
+                    <td className="p-2">{batch.quantity_kg}</td>
+                    <td className="p-2">{batch.estimated_grade}</td>
+                    <td className="p-2">
+                      {new Date(batch.harvest_date).toLocaleDateString()}
+                    </td>
+                    <td className="p-2">
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs ${
+                          batch.status === "sold"
+                            ? "bg-green-600"
+                            : batch.status === "pending_sale"
+                            ? "bg-yellow-600"
+                            : "bg-blue-600"
+                        }`}
+                      >
+                        {batch.status}
+                      </span>
+                    </td>
+                    <td className="p-2">
+                      <div className="flex gap-1">
                         <button
-                          onClick={() => openSendModal(b)}
-                          className="bg-indigo-600 hover:bg-indigo-700 px-3 py-1 rounded-lg text-xs"
+                          onClick={() => {
+                            setSelectedBatch(batch);
+                            setIsSellModalOpen(true);
+                          }}
+                          className="bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-xs"
+                          disabled={
+                            batch.status === "sold" ||
+                            batch.status === "pending_sale"
+                          }
                         >
-                          Send Forward
+                          Sell
                         </button>
-                      </td>
-                    </tr>
-
-                    {/* SubBatches display */}
-                    {b.subBatches && b.subBatches.length > 0 && (
-                      <tr>
-                        <td colSpan={8} className="bg-slate-900 p-2">
-                          <div className="ml-6">
-                            <h4 className="text-sm font-semibold mb-2">
-                              Sub-Batches Sent
-                            </h4>
-                            <table className="w-full text-left border-collapse text-xs">
-                              <thead>
-                                <tr className="bg-slate-700">
-                                  <th className="p-2">SubBatch ID</th>
-                                  <th className="p-2">Qty</th>
-                                  <th className="p-2">Sent To</th>
-                                  <th className="p-2">Date</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {b.subBatches.map(
-                                  (sub: SubBatch, idx: number) => (
-                                    <tr
-                                      key={idx}
-                                      className="border-b border-slate-700"
-                                    >
-                                      <td className="p-2">{sub.id}</td>
-                                      <td className="p-2">{sub.qty}</td>
-                                      <td className="p-2">{sub.to}</td>
-                                      <td className="p-2">{sub.date}</td>
-                                    </tr>
-                                  )
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                        <button
+                          onClick={() => {
+                            setSelectedBatch(batch);
+                            setIsPackageModalOpen(true);
+                          }}
+                          className="bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-xs"
+                          disabled={batch.status === "sold"}
+                        >
+                          Package
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* Send Forward Modal */}
-        {isModalOpen && selectedBatch && (
+        {/* Available Batches to Buy */}
+        <div className="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700">
+          <h2 className="text-xl font-bold mb-4">Available Batches to Buy</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {availableBatches.map((batch) => (
+              <div key={batch.batch_id} className="bg-slate-700 p-4 rounded-xl">
+                <h3 className="font-semibold text-lg">{batch.spice_name}</h3>
+                <p className="text-sm text-slate-300">ID: {batch.batch_id}</p>
+                <p className="text-sm text-slate-300">
+                  Quantity: {batch.quantity_kg}kg
+                </p>
+                <p className="text-sm text-slate-300">
+                  Grade: {batch.estimated_grade}
+                </p>
+                {batch.farmer && (
+                  <p className="text-sm text-slate-400">
+                    Farmer: {batch.farmer}
+                  </p>
+                )}
+                <button
+                  onClick={() => {
+                    setSelectedBatch(batch);
+                    setIsBuyModalOpen(true);
+                  }}
+                  className="mt-2 bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg text-sm w-full"
+                >
+                  Buy Now
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* My Packages Section */}
+        <div className="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700">
+          <h2 className="text-xl font-bold mb-4">My Packages</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-700 text-sm">
+                  <th className="p-2">Package ID</th>
+                  <th className="p-2">Spice</th>
+                  <th className="p-2">Quantity (kg)</th>
+                  <th className="p-2">Type</th>
+                  <th className="p-2">Status</th>
+                  <th className="p-2">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {myPackages.map((pkg) => (
+                  <tr
+                    key={pkg.id}
+                    className="border-b border-slate-700 text-sm"
+                  >
+                    <td className="p-2">{pkg.package_id}</td>
+                    <td className="p-2">{pkg.spice_name}</td>
+                    <td className="p-2">{pkg.quantity_kg}</td>
+                    <td className="p-2">{pkg.package_type}</td>
+                    <td className="p-2">
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs ${
+                          pkg.status === "sold"
+                            ? "bg-green-600"
+                            : pkg.status === "shipped"
+                            ? "bg-yellow-600"
+                            : "bg-blue-600"
+                        }`}
+                      >
+                        {pkg.status}
+                      </span>
+                    </td>
+                    <td className="p-2">
+                      {new Date(pkg.package_date).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Sell Modal */}
+        {isSellModalOpen && selectedBatch && (
           <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
             <div className="bg-slate-800 p-6 rounded-2xl shadow-lg w-96 border border-slate-600">
               <h3 className="text-lg font-bold mb-4">
-                Send Forward: {selectedBatch.spice}
+                Sell Batch: {selectedBatch.spice_name}
               </h3>
-
               <div className="mb-3">
-                <label className="block text-sm mb-1">Quantity (kg)</label>
+                <label className="block text-sm mb-1">Buyer User ID</label>
                 <input
                   type="number"
-                  value={sendQty}
-                  onChange={(e) => setSendQty(e.target.value)}
+                  value={sellForm.buyer_id}
+                  onChange={(e) =>
+                    setSellForm({ ...sellForm, buyer_id: e.target.value })
+                  }
                   className="w-full p-2 rounded bg-slate-700 border border-slate-600 text-white"
+                  placeholder="Enter buyer's user ID"
                 />
               </div>
-
-              <div className="mb-4">
-                <label className="block text-sm mb-1">Send To</label>
+              <div className="mb-3">
+                <label className="block text-sm mb-1">Price per kg (₹)</label>
                 <input
-                  type="text"
-                  value={sendTo}
-                  onChange={(e) => setSendTo(e.target.value)}
-                  placeholder="Middleman Y / Consumer"
+                  type="number"
+                  step="0.01"
+                  value={sellForm.price_per_kg}
+                  onChange={(e) =>
+                    setSellForm({ ...sellForm, price_per_kg: e.target.value })
+                  }
                   className="w-full p-2 rounded bg-slate-700 border border-slate-600 text-white"
                 />
               </div>
-
+              <div className="mb-4">
+                <label className="block text-sm mb-1">Notes (Optional)</label>
+                <textarea
+                  value={sellForm.notes}
+                  onChange={(e) =>
+                    setSellForm({ ...sellForm, notes: e.target.value })
+                  }
+                  className="w-full p-2 rounded bg-slate-700 border border-slate-600 text-white"
+                  rows={3}
+                />
+              </div>
               <div className="flex justify-end gap-2">
                 <button
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => setIsSellModalOpen(false)}
                   className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg text-sm"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleSendForward}
+                  onClick={handleSellBatch}
+                  className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm"
+                >
+                  Initiate Sale
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Package Modal */}
+        {isPackageModalOpen && selectedBatch && (
+          <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+            <div className="bg-slate-800 p-6 rounded-2xl shadow-lg w-96 border border-slate-600">
+              <h3 className="text-lg font-bold mb-4">
+                Create Package: {selectedBatch.spice_name}
+              </h3>
+              <div className="mb-3">
+                <label className="block text-sm mb-1">Quantity (kg)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  max={selectedBatch.quantity_kg}
+                  value={packageForm.quantity_kg}
+                  onChange={(e) =>
+                    setPackageForm({
+                      ...packageForm,
+                      quantity_kg: e.target.value,
+                    })
+                  }
+                  className="w-full p-2 rounded bg-slate-700 border border-slate-600 text-white"
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  Available: {selectedBatch.quantity_kg}kg
+                </p>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm mb-1">Package Type</label>
+                <select
+                  value={packageForm.package_type}
+                  onChange={(e) =>
+                    setPackageForm({
+                      ...packageForm,
+                      package_type: e.target.value,
+                    })
+                  }
+                  className="w-full p-2 rounded bg-slate-700 border border-slate-600 text-white"
+                >
+                  <option value="retail">Retail</option>
+                  <option value="wholesale">Wholesale</option>
+                  <option value="export">Export</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setIsPackageModalOpen(false)}
+                  className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreatePackage}
+                  className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm"
+                >
+                  Create Package
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Buy Modal */}
+        {isBuyModalOpen && selectedBatch && (
+          <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+            <div className="bg-slate-800 p-6 rounded-2xl shadow-lg w-96 border border-slate-600">
+              <h3 className="text-lg font-bold mb-4">
+                Buy Batch: {selectedBatch.spice_name}
+              </h3>
+              <div className="mb-3 text-sm text-slate-300">
+                <p>Quantity: {selectedBatch.quantity_kg}kg</p>
+                <p>Grade: {selectedBatch.estimated_grade}</p>
+                {selectedBatch.farmer && <p>Farmer: {selectedBatch.farmer}</p>}
+              </div>
+              <div className="mb-3">
+                <label className="block text-sm mb-1">
+                  Offer Price per kg (₹)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={buyForm.price_per_kg}
+                  onChange={(e) =>
+                    setBuyForm({ ...buyForm, price_per_kg: e.target.value })
+                  }
+                  className="w-full p-2 rounded bg-slate-700 border border-slate-600 text-white"
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm mb-1">Notes (Optional)</label>
+                <textarea
+                  value={buyForm.notes}
+                  onChange={(e) =>
+                    setBuyForm({ ...buyForm, notes: e.target.value })
+                  }
+                  className="w-full p-2 rounded bg-slate-700 border border-slate-600 text-white"
+                  rows={3}
+                />
+              </div>
+              {buyForm.price_per_kg && (
+                <div className="mb-4 p-3 bg-slate-700 rounded">
+                  <p className="text-sm font-semibold">
+                    Total Amount: ₹
+                    {(
+                      parseFloat(buyForm.price_per_kg) *
+                      selectedBatch.quantity_kg
+                    ).toFixed(2)}
+                  </p>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setIsBuyModalOpen(false)}
+                  className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleBuyBatch}
                   className="bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg text-sm"
                 >
-                  Send
+                  Send Purchase Offer
                 </button>
               </div>
             </div>
