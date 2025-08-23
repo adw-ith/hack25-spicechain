@@ -26,11 +26,12 @@ export default function LoginPage() {
       });
 
       const data = await res.json();
+      console.log(data);
 
       if (!res.ok) throw new Error(data.detail || "Something went wrong");
 
       if (activeTab === "login") {
-        localStorage.setItem("token", data.access_token);
+        localStorage.setItem("token", data.token);
         alert("Login successful!");
       } else {
         alert("Signup successful! Please login.");
