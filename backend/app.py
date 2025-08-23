@@ -47,12 +47,20 @@ class Batches(db.Model):
     farming_method = db.Column(db.String(50))  # organic, conventional
     estimated_grade = db.Column(db.String(20))  # A, B, C
     current_owner_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    status = db.Column(db.String(20), default='harvested')  # harvested, tested, sold, packaged
+    status = db.Column(db.String(20), default='harvested')  # harvested, tested, sold, packaged, divided, pending_sale
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
+    # NEW FIELD FOR BATCH DIVISION
+    parent_batch_id = db.Column(db.Integer, db.ForeignKey('batches.id'), nullable=True)
+    
+    # Existing relationships
     farmer = db.relationship('User', foreign_keys=[farmer_id], backref='farmed_batches')
     current_owner = db.relationship('User', foreign_keys=[current_owner_id])
     spice = db.relationship('Spices', backref='batches')
+    
+    # NEW RELATIONSHIPS FOR PARENT-CHILD
+    parent_batch = db.relationship('Batches', remote_side=[id], backref='sub_batches')
+
 
 class Package(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -905,6 +913,348 @@ def qr_lookup(package_id):
         }
     
     return jsonify(package_info), 200
+
+
+# Additional API endpoint for batch division
+@app.route('/api/batch/divide', methods=['POST'])
+@login_required
+def divide_batch():
+    """
+    Divide a batch into multiple sub-batches. Each division can be:
+    - Sold immediately (if buyer_id provided)
+    - Kept for later sale (if no buyer_id)
+    """
+    data = request.get_json()
+    required_fields = ['batch_id', 'divisions']
+    
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'{field} is required'}), 400
+    
+    # Verify batch ownership
+    original_batch = Batches.query.filter_by(
+        id=data['batch_id'], 
+        current_owner_id=session['user_id']
+    ).first()
+    
+    if not original_batch:
+        return jsonify({'error': 'Batch not found or not owned by user'}), 404
+    
+    # Validate divisions
+    divisions = data['divisions']
+    total_divided_quantity = sum(div['quantity_kg'] for div in divisions)
+    
+    if total_divided_quantity > original_batch.quantity_kg:
+        return jsonify({'error': 'Total divided quantity exceeds batch quantity'}), 400
+    
+    if len(divisions) < 1:
+        return jsonify({'error': 'At least 1 division required'}), 400
+    
+    try:
+        new_batches = []
+        transactions_created = []
+        
+        # Create new sub-batches
+        for i, division in enumerate(divisions):
+            # Generate new batch ID for sub-batch
+            sub_batch_id = f"{original_batch.batch_id}_DIV{i+1}_{str(uuid.uuid4())[:4].upper()}"
+            
+            # Determine initial owner - if buyer_id provided, they become owner after transaction
+            initial_owner_id = session['user_id']
+            
+            sub_batch = Batches(
+                batch_id=sub_batch_id,
+                farmer_id=original_batch.farmer_id,  # Keep original farmer
+                spice_id=original_batch.spice_id,
+                quantity_kg=division['quantity_kg'],
+                harvest_date=original_batch.harvest_date,
+                farm_location=original_batch.farm_location,
+                farming_method=original_batch.farming_method,
+                estimated_grade=original_batch.estimated_grade,
+                current_owner_id=initial_owner_id,
+                status='divided' if not division.get('buyer_id') else 'pending_sale',
+                parent_batch_id=original_batch.id  # Link to parent batch
+            )
+            
+            db.session.add(sub_batch)
+            db.session.flush()  # Get the ID
+            
+            batch_info = {
+                'batch_id': sub_batch_id,
+                'id': sub_batch.id,
+                'quantity_kg': division['quantity_kg'],
+                'status': 'available' if not division.get('buyer_id') else 'sold'
+            }
+            
+            # If buyer specified, create transaction immediately
+            if division.get('buyer_id') and division.get('price_per_kg'):
+                transaction_id = f"TXN_{datetime.now().strftime('%Y%m%d')}_{str(uuid.uuid4())[:8].upper()}"
+                total_amount = division['quantity_kg'] * division['price_per_kg']
+                
+                transaction = Transactions(
+                    transaction_id=transaction_id,
+                    from_user_id=session['user_id'],
+                    to_user_id=division['buyer_id'],
+                    batch_id=sub_batch.id,
+                    quantity_kg=division['quantity_kg'],
+                    price_per_kg=division['price_per_kg'],
+                    total_amount=total_amount,
+                    transaction_type='sale',
+                    payment_status='pending',
+                    notes=f"Sale of divided batch {sub_batch_id}"
+                )
+                
+                db.session.add(transaction)
+                
+                batch_info['transaction_id'] = transaction_id
+                batch_info['buyer_id'] = division['buyer_id']
+                batch_info['total_amount'] = total_amount
+                
+                transactions_created.append({
+                    'transaction_id': transaction_id,
+                    'batch_id': sub_batch_id,
+                    'buyer_id': division['buyer_id'],
+                    'total_amount': total_amount,
+                    'status': 'pending'
+                })
+                
+                # Add transaction timeline event
+                add_timeline_event(
+                    batch_id=sub_batch.id,
+                    event_type='sale_initiated',
+                    description=f'Sale initiated to buyer {division["buyer_id"]}',
+                    user_id=session['user_id'],
+                    location=original_batch.farm_location,
+                    event_metadata={
+                        'transaction_id': transaction_id,
+                        'price_per_kg': division['price_per_kg'],
+                        'total_amount': total_amount
+                    }
+                )
+            
+            new_batches.append(batch_info)
+            
+            # Add timeline event for division
+            add_timeline_event(
+                batch_id=sub_batch.id,
+                event_type='batch_divided',
+                description=f'Sub-batch created from {original_batch.batch_id} ({division["quantity_kg"]}kg)',
+                user_id=session['user_id'],
+                location=original_batch.farm_location,
+                event_metadata={
+                    'parent_batch_id': original_batch.batch_id,
+                    'division_number': i+1,
+                    'quantity_kg': division['quantity_kg'],
+                    'has_buyer': bool(division.get('buyer_id'))
+                }
+            )
+        
+        # Update original batch status
+        original_batch.status = 'divided'
+        original_batch.quantity_kg = original_batch.quantity_kg - total_divided_quantity  # Remaining quantity
+        
+        # If entire batch was divided, mark as fully divided
+        if original_batch.quantity_kg == 0:
+            original_batch.status = 'fully_divided'
+        
+        # Add timeline event to original batch
+        add_timeline_event(
+            batch_id=original_batch.id,
+            event_type='batch_divided',
+            description=f'Batch divided into {len(divisions)} sub-batches',
+            user_id=session['user_id'],
+            location=original_batch.farm_location,
+            event_metadata={
+                'total_divisions': len(divisions),
+                'total_divided_quantity': total_divided_quantity,
+                'remaining_quantity': original_batch.quantity_kg
+            }
+        )
+        
+        db.session.commit()
+        
+        log_action(session['user_id'], 'BATCH_DIVIDED', 'batch', original_batch.batch_id)
+        
+        return jsonify({
+            'message': 'Batch divided successfully',
+            'original_batch_remaining': original_batch.quantity_kg,
+            'new_batches': new_batches,
+            'transactions_created': transactions_created,
+            'summary': {
+                'total_divisions': len(divisions),
+                'immediately_sold': len(transactions_created),
+                'kept_for_later': len(divisions) - len(transactions_created)
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+# Endpoint to sell individual divisions later
+@app.route('/api/batch/<int:batch_id>/sell', methods=['POST'])
+@login_required
+def sell_individual_batch(batch_id):
+    """
+    Sell an individual batch (including divided sub-batches) to a specific buyer
+    """
+    data = request.get_json()
+    required_fields = ['buyer_id', 'price_per_kg']
+    
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'{field} is required'}), 400
+    
+    # Verify batch ownership
+    batch = Batches.query.filter_by(
+        id=batch_id,
+        current_owner_id=session['user_id']
+    ).first()
+    
+    if not batch:
+        return jsonify({'error': 'Batch not found or not owned by user'}), 404
+    
+    if batch.status in ['sold', 'pending_sale']:
+        return jsonify({'error': 'Batch is already sold or pending sale'}), 400
+    
+    try:
+        # Create transaction
+        transaction_id = f"TXN_{datetime.now().strftime('%Y%m%d')}_{str(uuid.uuid4())[:8].upper()}"
+        total_amount = batch.quantity_kg * data['price_per_kg']
+        
+        transaction = Transactions(
+            transaction_id=transaction_id,
+            from_user_id=session['user_id'],
+            to_user_id=data['buyer_id'],
+            batch_id=batch.id,
+            quantity_kg=batch.quantity_kg,
+            price_per_kg=data['price_per_kg'],
+            total_amount=total_amount,
+            transaction_type='sale',
+            payment_status='pending',
+            notes=data.get('notes', f'Sale of batch {batch.batch_id}')
+        )
+        
+        db.session.add(transaction)
+        
+        # Update batch status
+        batch.status = 'pending_sale'
+        
+        # Add timeline event
+        add_timeline_event(
+            batch_id=batch.id,
+            event_type='sale_initiated',
+            description=f'Sale initiated to buyer {data["buyer_id"]}',
+            user_id=session['user_id'],
+            location=batch.farm_location,
+            event_metadata={
+                'transaction_id': transaction_id,
+                'price_per_kg': data['price_per_kg'],
+                'total_amount': total_amount
+            }
+        )
+        
+        db.session.commit()
+        
+        log_action(session['user_id'], 'BATCH_SALE_INITIATED', 'batch', batch.batch_id)
+        
+        return jsonify({
+            'message': 'Sale initiated successfully',
+            'transaction_id': transaction_id,
+            'batch_id': batch.batch_id,
+            'total_amount': total_amount,
+            'status': 'pending_buyer_confirmation'
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+# Get available (unsold) batches for a user
+@app.route('/api/mybatches/available', methods=['GET'])
+@login_required
+def get_available_batches():
+    """
+    Get all batches owned by user that are available for sale
+    """
+    available_batches = Batches.query.filter_by(
+        current_owner_id=session['user_id']
+    ).filter(
+        Batches.status.in_(['harvested', 'tested', 'divided', 'packaged'])
+    ).all()
+    
+    batches_list = []
+    
+    for batch in available_batches:
+        batch_data = {
+            'id': batch.id,
+            'batch_id': batch.batch_id,
+            'spice_name': batch.spice.name,
+            'quantity_kg': batch.quantity_kg,
+            'harvest_date': batch.harvest_date.isoformat(),
+            'status': batch.status,
+            'estimated_grade': batch.estimated_grade,
+            'is_division': batch.parent_batch_id is not None
+        }
+        
+        # If it's a division, show parent info
+        if batch.parent_batch_id:
+            batch_data['parent_batch_id'] = batch.parent_batch.batch_id
+            batch_data['division_info'] = f'Divided from {batch.parent_batch.batch_id}'
+        
+        batches_list.append(batch_data)
+    
+    return jsonify({
+        'available_batches': batches_list,
+        'total_count': len(batches_list)
+    }), 200
+
+@app.route('/api/batch/<int:batch_id>/history', methods=['GET'])
+def get_batch_family_history(batch_id):
+    """
+    Get complete history including parent and child batches
+    """
+    batch = Batches.query.get(batch_id)
+    if not batch:
+        return jsonify({'error': 'Batch not found'}), 404
+    
+    # Get root batch (original parent)
+    root_batch = batch
+    while root_batch.parent_batch_id:
+        root_batch = root_batch.parent_batch
+    
+    # Get all related batches (siblings and children)
+    family_batches = [root_batch]
+    family_batches.extend(root_batch.sub_batches)
+    
+    # Get timeline for all related batches
+    batch_ids = [b.id for b in family_batches]
+    timeline_events = Timeline.query.filter(
+        Timeline.batch_id.in_(batch_ids)
+    ).order_by(Timeline.timestamp).all()
+    
+    # Format response
+    family_tree = {
+        'root_batch': {
+            'batch_id': root_batch.batch_id,
+            'original_quantity': root_batch.quantity_kg,
+            'status': root_batch.status
+        },
+        'divisions': [{
+            'batch_id': sub.batch_id,
+            'quantity_kg': sub.quantity_kg,
+            'current_owner': sub.current_owner.username,
+            'status': sub.status
+        } for sub in root_batch.sub_batches],
+        'timeline': [{
+            'timestamp': event.timestamp.isoformat(),
+            'event_type': event.event_type,
+            'description': event.event_description,
+            'batch_id': event.batch.batch_id if event.batch else None
+        } for event in timeline_events]
+    }
+    
+    return jsonify(family_tree), 200
 
 # Error handlers
 @app.errorhandler(404)
