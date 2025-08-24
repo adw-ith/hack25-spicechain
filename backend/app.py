@@ -471,10 +471,7 @@ def create_package():
     
     # Calculate expiry date based on spice shelf life
     expiry_date = None
-    if batch.spice.shelf_life_months:
-        from dateutil.relativedelta import relativedelta
-        expiry_date = datetime.utcnow() + relativedelta(months=batch.spice.shelf_life_months)
-    
+
     package = Package(
         package_id=package_id,
         batch_id=data['batch_id'],
@@ -757,7 +754,8 @@ def get_my_packages():
     packages_list = []
     
     for package in packages:
-        spice_name  = Spices.query.filter_by(id=package.spice_id).first()
+        batch = Batches.query.filter_by(id=package.batch_id).first()
+        spice_name  = Spices.query.filter_by(id=batch.spice_id).first()
         if spice_name is None:
             spice_display_name = f"Unknown Spice (ID: {package.spice_id})"
         else:

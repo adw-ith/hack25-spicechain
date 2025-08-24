@@ -1,4 +1,5 @@
 "use client";
+import PackageQRCode from "@/app/components/PackageQRCode";
 import { useState, useEffect } from "react";
 
 type Batch = {
@@ -72,7 +73,7 @@ export default function MiddlemanPage() {
   });
 
   // API base URL
-  const API_BASE = "http://localhost:5000/api";
+  const API_BASE = "http://127.0.0.1:5000/api";
 
   // Fetch data on component mount
   useEffect(() => {
@@ -207,6 +208,8 @@ export default function MiddlemanPage() {
     }
   };
 
+  const [packageId, setPackageId] = useState("");
+
   const handleCreatePackage = async () => {
     if (!selectedBatch || !packageForm.quantity_kg) {
       alert("Please fill all required fields");
@@ -230,6 +233,7 @@ export default function MiddlemanPage() {
       const data = await response.json();
       if (response.ok) {
         alert(`Package created! ID: ${data.package_id}`);
+        setPackageId(data.package_id);
         setIsPackageModalOpen(false);
         setPackageForm({ quantity_kg: "", package_type: "retail" });
         fetchMyBatches();
@@ -452,11 +456,12 @@ export default function MiddlemanPage() {
                         </button>
                         <button
                           onClick={() => {
+                            console.log("Packageing", batch);
                             setSelectedBatch(batch);
                             setIsPackageModalOpen(true);
                           }}
                           className="bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-xs"
-                          disabled={batch.status === "sold"}
+                          // disabled={batch.status === "sold"}
                         >
                           Package
                         </button>
@@ -737,6 +742,11 @@ export default function MiddlemanPage() {
           </div>
         )}
       </div>
+      {packageId && (
+        <div className="mt-6">
+          <PackageQRCode packageId={packageId} size={256} />
+        </div>
+      )}
     </div>
   );
 }

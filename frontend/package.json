@@ -9,9 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@zxing/library": "^0.21.3",
     "axios": "^1.11.0",
+    "html-to-image": "^1.11.13",
     "html5-qrcode": "^2.3.8",
     "next": "15.5.0",
+    "qrcode.react": "^4.2.0",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
