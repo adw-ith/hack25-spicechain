@@ -69,7 +69,7 @@ export default function Home() {
         {/* Hero Section */}
         <div className="relative z-10 w-full max-w-5xl p-8 text-center flex flex-col justify-end min-h-[50vh] mt-auto mb-8">
           <h1 className="text-6xl md:text-8xl font-bold text-white mb-2">
-            Spice<span className="text-orange-500">Chain</span>
+            Spice<span className="text-orange-500">Stream</span>
           </h1>
           <p className="text-slate-200 mt-6 mb-16 text-xl md:text-2xl font-medium max-w-2xl mx-auto leading-relaxed">
             Transparently Tracking the Spice Journey.
@@ -93,7 +93,7 @@ export default function Home() {
               href="/consumer"
               className="block bg-orange-500 hover:bg-orange-600 text-white font-bold py-5 px-6 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 text-lg"
             >
-              I am a Business
+              I am a Merchant
             </Link>
             {/* <a
               href="/trace"

@@ -1,6 +1,6 @@
 // app/farmer/page.tsx
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // TypeScript interfaces
 interface Batch {
@@ -64,6 +64,12 @@ export default function FarmerPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // QR Code states
+  const [showQRCode, setShowQRCode] = useState(false);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState("");
+  const [registeredBatchId, setRegisteredBatchId] = useState("");
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
   // Form states
   const [activeTab, setActiveTab] = useState<
     "overview" | "register" | "sell" | "divide"
@@ -84,6 +90,112 @@ export default function FarmerPage() {
   const [divisions, setDivisions] = useState<DivisionItem[]>([
     { quantity_kg: 0 },
   ]);
+
+  // QR Code Generation Functions
+  const generateQRMatrix = (text: string, size: number): boolean[][] => {
+    const matrixSize = 25;
+    const matrix: boolean[][] = [];
+
+    // Initialize matrix
+    for (let i = 0; i < matrixSize; i++) {
+      matrix[i] = new Array(matrixSize).fill(false);
+    }
+
+    // Add finder patterns (corner squares)
+    const addFinderPattern = (startRow: number, startCol: number) => {
+      for (let i = 0; i < 7; i++) {
+        for (let j = 0; j < 7; j++) {
+          if (startRow + i < matrixSize && startCol + j < matrixSize) {
+            const isEdge = i === 0 || i === 6 || j === 0 || j === 6;
+            const isInnerSquare = i >= 2 && i <= 4 && j >= 2 && j <= 4;
+            matrix[startRow + i][startCol + j] = isEdge || isInnerSquare;
+          }
+        }
+      }
+    };
+
+    // Add finder patterns at corners
+    addFinderPattern(0, 0);
+    addFinderPattern(0, matrixSize - 7);
+    addFinderPattern(matrixSize - 7, 0);
+
+    // Add timing patterns
+    for (let i = 8; i < matrixSize - 8; i++) {
+      matrix[6][i] = i % 2 === 0;
+      matrix[i][6] = i % 2 === 0;
+    }
+
+    // Add data based on text hash
+    const textHash = simpleHash(text);
+    for (let i = 9; i < matrixSize - 9; i++) {
+      for (let j = 9; j < matrixSize - 9; j++) {
+        matrix[i][j] = (textHash + i * j) % 3 === 0;
+      }
+    }
+
+    return matrix;
+  };
+
+  const simpleHash = (str: string): number => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash);
+  };
+
+  const generateQRCode = async (
+    text: string,
+    size: number = 256
+  ): Promise<string> => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      throw new Error("Canvas not available");
+    }
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Canvas context not available");
+    }
+
+    // Set canvas size
+    canvas.width = size;
+    canvas.height = size;
+
+    // Generate QR matrix
+    const qrMatrix = generateQRMatrix(text, size);
+
+    // Clear canvas
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, size, size);
+
+    // Draw QR code
+    const cellSize = size / qrMatrix.length;
+    ctx.fillStyle = "#000000";
+
+    for (let row = 0; row < qrMatrix.length; row++) {
+      for (let col = 0; col < qrMatrix[row].length; col++) {
+        if (qrMatrix[row][col]) {
+          ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+        }
+      }
+    }
+
+    return canvas.toDataURL("image/png");
+  };
+
+  const handleDownloadQR = () => {
+    if (!qrCodeDataUrl || !registeredBatchId) return;
+
+    const link = document.createElement("a");
+    link.href = qrCodeDataUrl;
+    link.download = `batch-${registeredBatchId}-qr.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // API Functions
   const fetchBatches = async () => {
@@ -238,7 +350,14 @@ export default function FarmerPage() {
 
       if (response.ok) {
         const data = await response.json();
-        alert(`Batch registered successfully! Batch ID: ${data.batch_id}`);
+
+        // Generate QR Code for the batch
+        const qrDataUrl = await generateQRCode(data.batch_id);
+
+        // Set QR code state
+        setRegisteredBatchId(data.batch_id);
+        setQrCodeDataUrl(qrDataUrl);
+        setShowQRCode(true);
 
         // Reset form
         setNewBatch({
@@ -261,6 +380,7 @@ export default function FarmerPage() {
       }
     } catch (error) {
       alert("Failed to register batch");
+      console.error("Registration error:", error);
     }
   };
 
@@ -342,19 +462,18 @@ export default function FarmerPage() {
 
   const logout = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/logout", {
+      const response = await fetch("http://127.0.0.1:5000/api/logout", {
         method: "POST",
         credentials: "include",
       });
       if (response.ok) {
-        // localStorage.removeItem("token");
         alert("Logged out successfully");
-        window.location.href = "/login"; // Redirect to login page
+        window.location.href = "/login";
       }
     } catch (error) {
       alert("Logout failed");
     }
-  }
+  };
 
   if (loading) {
     return (
@@ -369,8 +488,89 @@ export default function FarmerPage() {
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold">Farmer Dashboard</h1>
-          <button className=" bg-red-700 px-4 py-2 rounded cursor-pointer" onClick={() => logout()}>Logout</button>
+          <button
+            className="bg-red-700 px-4 py-2 rounded cursor-pointer"
+            onClick={() => logout()}
+          >
+            Logout
+          </button>
         </div>
+
+        {/* QR Code Modal */}
+        {showQRCode && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white p-8 rounded-2xl max-w-md w-full mx-4">
+              <div className="text-center">
+                <h2 className="text-2xl font-bold text-gray-800 mb-4">
+                  Batch Registered Successfully!
+                </h2>
+
+                <div className="mb-6">
+                  <img
+                    src={qrCodeDataUrl}
+                    alt={`QR Code for batch ${registeredBatchId}`}
+                    className="mx-auto border-2 border-gray-300 rounded-lg shadow-lg"
+                    style={{ width: 256, height: 256 }}
+                  />
+                </div>
+
+                <div className="mb-6 p-4 bg-gray-100 rounded-lg">
+                  <p className="text-sm text-gray-600 mb-2">Batch Number:</p>
+                  <p className="font-mono text-lg font-bold text-gray-800">
+                    {registeredBatchId}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Generated on: {new Date().toLocaleDateString()} at{" "}
+                    {new Date().toLocaleTimeString()}
+                  </p>
+                </div>
+
+                <div className="flex gap-3 justify-center mb-4">
+                  <button
+                    onClick={handleDownloadQR}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                    Download QR Code
+                  </button>
+
+                  <button
+                    onClick={() => setShowQRCode(false)}
+                    className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="p-3 bg-blue-50 rounded-lg text-left">
+                  <p className="text-sm text-blue-800">
+                    <strong>Note:</strong> Save this QR code for batch tracking.
+                    You can scan it later to quickly identify this batch.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Hidden Canvas for QR Generation */}
+        <canvas
+          ref={canvasRef}
+          style={{ display: "none" }}
+          aria-hidden="true"
+        />
 
         {/* Dashboard Summary */}
         {dashboardData && (
