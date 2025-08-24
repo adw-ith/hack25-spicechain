@@ -515,6 +515,84 @@ def create_package():
         'expiry_date': expiry_date.isoformat() if expiry_date else None
     }), 201
 
+
+@app.route('/api/trace/<package_id>', methods=['GET'])
+def trace_package_history(package_id):
+    """
+    Provides a complete end-to-end history for a package, tracing it back
+    to its original root batch, even across divisions.
+    """
+    # 1. Find the starting package
+    package = Package.query.filter_by(package_id=package_id).first()
+    if not package:
+        return jsonify({'error': 'Package not found'}), 404
+
+    # 2. Trace back to the ultimate root batch
+    root_batch = package.batch
+    while root_batch.parent_batch:
+        root_batch = root_batch.parent_batch
+
+    # 3. Gather all related batches in the "family" (the root and all its children)
+    family_batch_ids = [root_batch.id]
+    if root_batch.sub_batches:
+        family_batch_ids.extend([sub.id for sub in root_batch.sub_batches])
+    
+    # 4. Collect all timeline events for the package AND the entire batch family
+    from sqlalchemy import or_
+    all_events = Timeline.query.filter(
+        or_(
+            Timeline.batch_id.in_(family_batch_ids),
+            Timeline.package_id == package.id
+        )
+    ).order_by(Timeline.timestamp.asc()).all()
+
+    # 5. Structure the response for clarity
+    
+    # Details of the final product
+    package_details = {
+        'package_id': package.package_id,
+        'spice_name': package.batch.spice.name,
+        'quantity_kg': package.quantity_kg,
+        'package_date': package.package_date.isoformat(),
+        'packaged_by': package.packager.username,
+        'status': package.status
+    }
+    
+    # Details of the original harvest
+    origin_details = {
+        'root_batch_id': root_batch.batch_id,
+        'original_farmer': root_batch.farmer.username,
+        'harvest_date': root_batch.harvest_date.isoformat(),
+        'farm_location': root_batch.farm_location,
+        'farming_method': root_batch.farming_method,
+        'original_quantity_kg': root_batch.quantity_kg + sum(sub.quantity_kg for sub in root_batch.sub_batches)
+    }
+
+    # The full chronological journey
+    full_journey = []
+    for event in all_events:
+        event_data = {
+            'timestamp': event.timestamp.isoformat(),
+            'event_type': event.event_type,
+            'description': event.event_description,
+            'user': event.user.username if event.user else 'System',
+            'location': event.location,
+            'metadata': json.loads(event.event_metadata) if event.event_metadata else {}
+        }
+        # Add context to know which item the event refers to
+        if event.batch:
+            event_data['context_id'] = f"Batch: {event.batch.batch_id}"
+        elif event.package:
+            event_data['context_id'] = f"Package: {event.package.package_id}"
+        
+        full_journey.append(event_data)
+
+    return jsonify({
+        'package_details': package_details,
+        'origin_details': origin_details,
+        'full_journey': full_journey
+    }), 200
+
 @app.route('/api/fetchhistory/<package_id>', methods=['GET'])
 def fetch_history(package_id):
     package = Package.query.filter_by(package_id=package_id).first()
